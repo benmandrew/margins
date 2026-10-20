@@ -569,7 +569,7 @@ func TestLineColOffset(t *testing.T) {
 	src := []byte("ab\nçd\n")
 	for _, tt := range []struct {
 		line, col, off int
-		ok            bool
+		ok             bool
 	}{
 		{1, 1, 0, true}, {1, 3, 2, true}, {1, 4, 0, false},
 		{2, 1, 3, true}, {2, 2, 0, false}, {2, 3, 5, true}, {3, 1, 7, true}, {4, 1, 0, false},

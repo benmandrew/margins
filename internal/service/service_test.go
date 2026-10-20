@@ -383,4 +383,3 @@ func TestSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
