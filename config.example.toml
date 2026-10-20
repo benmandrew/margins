@@ -1,0 +1,67 @@
+# Service configuration, rendered by Ansible to /etc/thesis/config.toml.
+# Secrets are not here: THESIS_WEBHOOK_SECRET and THESIS_GITEA_TOKEN come from
+# the environment. Every key below except [repo] and [[users]] has a default.
+
+listen = ":8080"
+data_dir = "/data"
+
+# The public origin. The WebAuthn relying-party ID is its host, and every POST
+# must carry exactly this Origin.
+origin = "https://thesis.benmandrew.com"
+
+# The header nginx sets to the real client address. nginx derives it from
+# CF-Connecting-IP for Cloudflare's ranges only, so a client cannot choose it.
+client_ip_header = "X-Real-IP"
+
+# Wall-clock times (snapshot_at) are read in this zone.
+timezone = "Europe/London"
+
+[repo]
+full_name = "me/thesis-source"
+clone_url = "http://100.64.0.2:3000/me/thesis-source.git"
+default_branch = "main"
+
+# Build settings for commits with no .typst-review.toml.
+[defaults]
+typst = "0.15.1"
+entrypoints = ["main.typ"]
+fonts = ""
+branches = ["main"]
+review_tags = "review-*"
+
+[limits]
+build_timeout = "120s"
+workers = 1
+max_output_bytes = 209715200
+diff_queue = 10
+max_attempts = 3
+backfill_depth = 200
+disk_budget_bytes = 4294967296
+note_max_chars = 4000
+notes_per_commit = 500
+
+[timers]
+poll = "10m"
+backfill = "1h"
+retry = "1h"
+review_diffs = "1h"
+prune = "24h"
+# Daily, at this local time, before the host's 02:00 backup run.
+snapshot_at = "01:30"
+
+# "<version>/<target>" -> SHA-256 of the official release archive.
+[typst_hashes]
+"0.15.1/x86_64-unknown-linux-musl" = "a6d077d0a95eed5a2eba715b2dae06be954f624ccbf85758a03f389ded33118c"
+"0.15.1/aarch64-unknown-linux-musl" = "5aa8d74a3d906e60ea12a66ac2f37f8eef1b14cbad7182a745e393a10c23dcee"
+
+[[users]]
+id = "ben"
+name = "Ben"
+role = "author"
+enrol_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[[users]]
+id = "alice"
+name = "Alice"
+role = "supervisor"
+enrol_hash = "1111111111111111111111111111111111111111111111111111111111111111"
