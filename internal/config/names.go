@@ -6,7 +6,7 @@ import "regexp"
 // of them can start with '-', so no value can be read as a git option, and
 // none admits a '..' path segment.
 var (
-	TypstVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$`)
+	TypstVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$`)
 	SHA          = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	ShortSHA     = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 	// Branch and tag names: a conservative subset of git-check-ref-format.

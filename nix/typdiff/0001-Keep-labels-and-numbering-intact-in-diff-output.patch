@@ -1,0 +1,1082 @@
+From 3a7008a4b3279e4cf5a46db0990ee953cc425139 Mon Sep 17 00:00:00 2001
+From: benmandrew <benmandrew@gmail.com>
+Date: Tue, 20 Oct 2026 17:59:21 +0100
+Subject: [PATCH] Keep labels and numbering intact in diff output
+
+- Attach a label on its own line to the heading, display equation, raw
+  block or function call before it, so it keeps labelling that element.
+  Added equations keep the label inside the diff-added wrapper, right
+  after the equation; added headings put it after the wrapper.
+- Emit deleted blocks of a replaced region in document order, and pair
+  replaced atomic blocks of the same sort (equation, raw block, call to
+  the same function, #let of the same name) as Changed.
+- Deleted display equations are set with numbering: none, deleted
+  headings become unnumbered #heading(...) calls, and labels of deleted
+  content are dropped, so numbers match the new document.
+- Mark added, deleted and changed function calls and #let bindings with
+  diff-added-mark / diff-deleted-mark / diff-changed-mark margin notes
+  placed with place(). Deleted calls are kept only as comments.
+- Add --no-preamble to leave out the markup definitions, and document
+  the names an imported markup file must define.
+- Test an empty old file.
+---
+ README.md                         |  26 ++-
+ src/diff.rs                       | 221 +++++++++++++++++++++---
+ src/lib.rs                        |  25 +++
+ src/main.rs                       |  10 +-
+ src/parse.rs                      |  65 ++++++-
+ src/render.rs                     | 272 ++++++++++++++++++++++++++++--
+ tests/fixtures/thesis-ch1-new.typ |  32 ++++
+ tests/fixtures/thesis-ch1-old.typ |  32 ++++
+ tests/fixtures/thesis-ch3-new.typ |  12 ++
+ tests/integration.rs              | 135 +++++++++++++++
+ 10 files changed, 785 insertions(+), 45 deletions(-)
+ create mode 100644 tests/fixtures/thesis-ch1-new.typ
+ create mode 100644 tests/fixtures/thesis-ch1-old.typ
+ create mode 100644 tests/fixtures/thesis-ch3-new.typ
+
+diff --git a/README.md b/README.md
+index 475f1f8..a5847ec 100644
+--- a/README.md
++++ b/README.md
+@@ -84,7 +84,7 @@ cargo install --git https://github.com/sou1118/typdiff
+ ## Usage
+ 
+ ```
+-typdiff <OLD> <NEW> [-o <OUTPUT>]
++typdiff <OLD> <NEW> [-o <OUTPUT>] [--no-preamble]
+ ```
+ 
+ | Argument | Description |
+@@ -92,6 +92,9 @@ typdiff <OLD> <NEW> [-o <OUTPUT>]
+ | `<OLD>` | Path to the old Typst file |
+ | `<NEW>` | Path to the new Typst file |
+ | `-o, --output <OUTPUT>` | Output file path (defaults to stdout) |
++| `--no-preamble` | Do not define the markup functions in the output (see below) |
++
++To mark a whole new file as added, diff it against an empty file.
+ 
+ ### Examples
+ 
+@@ -106,6 +109,27 @@ typdiff old.typ new.typ -o diff.typ
+ typdiff old.typ new.typ -o diff.typ && typst compile diff.typ
+ ```
+ 
++### Markup functions and `--no-preamble`
++
++By default the output starts with its own definitions of the markup functions, so it compiles on its own. With `--no-preamble` these definitions are left out, and you must make the names below available yourself, for example with `#import "/diff-markup.typ": *` at the top of each output file.
++
++| Name | Signature | Used for |
++|---|---|---|
++| `diff-added` | `diff-added(body)` | Added text, headings, list items, display equations and raw blocks |
++| `diff-deleted` | `diff-deleted(body)` | Deleted text and blocks |
++| `diff-added-mark` | `diff-added-mark(note: "added")` | Margin mark before an added code block such as `#figure(...)` or `#let` |
++| `diff-deleted-mark` | `diff-deleted-mark(note: "deleted")` | Margin mark where a code block was deleted |
++| `diff-changed-mark` | `diff-changed-mark(note: "changed")` | Margin mark before a changed code block |
++
++Each mark function is called with no arguments, except for `#let` bindings, which pass `note: "definition added"`, `"definition deleted"` or `"definition changed"`. A mark function should use `place()` so that it takes no space in the layout. It must not wrap the next block: the block follows the mark call as a separate element so that its label and number still work.
++
++### How changes to numbered elements are shown
++
++- A label keeps its element. A label on the line after a heading, display equation, raw block or function call stays attached to it in the output. For an added equation the label is inside `#diff-added[...]`, directly after the equation, so `@label` refers to the equation.
++- Deleted content does not take a number and cannot be referenced. A deleted display equation is set with `math.equation(numbering: none)`, a deleted heading is emitted as an unnumbered `#heading(...)`, and the labels of deleted content are dropped. The numbers in the diff therefore match the new document.
++- A changed display equation is shown as the old equation (deleted, unnumbered) followed by the new one (added, numbered).
++- Code blocks such as `#figure(...)`, `#table(...)` and `#let` are not wrapped, because that would change what they do. A changed or added call is emitted as-is after a margin mark. A deleted call is not run: it appears only as `//` comments after a deleted mark, so it takes no figure number and defines nothing. The old version of a changed call is kept as `//` comments too.
++
+ ## Features
+ 
+ - **Block-level diffing** — Detects structural changes in headings, paragraphs, list items, enum items, and term list items
+diff --git a/src/diff.rs b/src/diff.rs
+index 208733b..d23871b 100644
+--- a/src/diff.rs
++++ b/src/diff.rs
+@@ -93,7 +93,9 @@ fn process_replace(old_range: &[Block], new_range: &[Block], results: &mut Vec<D
+         }
+     }
+ 
+-    // 2. Greedy match: sort by similarity descending, assign pairs.
++    // 2. Greedy match: sort by similarity descending, assign pairs. A pair
++    //    that would cross an existing pair is rejected, so the matched pairs
++    //    stay in document order on both sides.
+     candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+ 
+     // matched_old[oi] = Some(ni), matched_new[ni] = Some(oi)
+@@ -101,35 +103,120 @@ fn process_replace(old_range: &[Block], new_range: &[Block], results: &mut Vec<D
+     let mut matched_new: Vec<Option<usize>> = vec![None; new_range.len()];
+ 
+     for (oi, ni, _ratio) in &candidates {
+-        if matched_old[*oi].is_none() && matched_new[*ni].is_none() {
++        if matched_old[*oi].is_some() || matched_new[*ni].is_some() {
++            continue;
++        }
++        let crosses = matched_old
++            .iter()
++            .enumerate()
++            .any(|(o, n)| n.is_some_and(|n| (o < *oi && n > *ni) || (o > *oi && n < *ni)));
++        if !crosses {
+             matched_old[*oi] = Some(*ni);
+             matched_new[*ni] = Some(*oi);
+         }
+     }
+ 
+-    // 3. Emit results in document order.
+-    // First: unmatched old blocks as Deleted.
+-    for (oi, old_b) in old_range.iter().enumerate() {
+-        if matched_old[oi].is_none() {
+-            results.push(DiffResult::Deleted(old_b.clone()));
++    // 3. Emit results in document order. The matched pairs split both ranges
++    //    into gaps. Each gap emits its old-only blocks (Deleted) first, then
++    //    its new-only blocks (Added), then the matched pair (Modified). This
++    //    keeps a deleted block next to the blocks that surrounded it.
++    let mut anchors: Vec<(usize, usize)> = matched_old
++        .iter()
++        .enumerate()
++        .filter_map(|(o, n)| n.map(|n| (o, n)))
++        .collect();
++    anchors.sort();
++
++    let mut old_pos = 0;
++    let mut new_pos = 0;
++    for &(oi, ni) in &anchors {
++        emit_gap(&old_range[old_pos..oi], &new_range[new_pos..ni], results);
++        let old_b = &old_range[oi];
++        let new_b = &new_range[ni];
++        let old_text = old_b.diff_text().unwrap();
++        let new_text = new_b.diff_text().unwrap();
++        let spans = word_diff(&old_text, &new_text);
++        results.push(DiffResult::Modified {
++            kind: old_b.kind(),
++            spans,
++        });
++        old_pos = oi + 1;
++        new_pos = ni + 1;
++    }
++    emit_gap(&old_range[old_pos..], &new_range[new_pos..], results);
++}
++
++/// Emit an unmatched stretch of a Replace region. Atomic blocks of the same
++/// sort (for example two `#figure` calls, or two display equations) are
++/// paired into `Changed`; everything else is `Deleted` or `Added`.
++fn emit_gap(old_gap: &[Block], new_gap: &[Block], results: &mut Vec<DiffResult>) {
++    let mut paired_new: Vec<Option<usize>> = vec![None; new_gap.len()];
++    let mut paired_old: Vec<bool> = vec![false; old_gap.len()];
++    let mut next_new = 0;
++    for (oi, old_b) in old_gap.iter().enumerate() {
++        let Some(key) = atomic_key(old_b) else {
++            continue;
++        };
++        // Search forward only, so the pairs stay in order.
++        if let Some(ni) = (next_new..new_gap.len())
++            .find(|&ni| atomic_key(&new_gap[ni]).as_deref() == Some(key.as_str()))
++        {
++            paired_new[ni] = Some(oi);
++            paired_old[oi] = true;
++            next_new = ni + 1;
+         }
+     }
+ 
+-    // Then: new blocks in order — Modified if matched, Added if unmatched.
+-    for (ni, new_b) in new_range.iter().enumerate() {
+-        if let Some(oi) = matched_new[ni] {
+-            let old_b = &old_range[oi];
+-            let old_text = old_b.diff_text().unwrap();
+-            let new_text = new_b.diff_text().unwrap();
+-            let spans = word_diff(&old_text, &new_text);
+-            results.push(DiffResult::Modified {
+-                kind: old_b.kind(),
+-                spans,
+-            });
+-        } else {
+-            results.push(DiffResult::Added(new_b.clone()));
++    for (oi, old_b) in old_gap.iter().enumerate() {
++        if !paired_old[oi] {
++            results.push(DiffResult::Deleted(old_b.clone()));
+         }
+     }
++    for (ni, new_b) in new_gap.iter().enumerate() {
++        match paired_new[ni] {
++            Some(oi) => results.push(DiffResult::Changed {
++                old: old_gap[oi].clone(),
++                new: new_b.clone(),
++            }),
++            None => results.push(DiffResult::Added(new_b.clone())),
++        }
++    }
++}
++
++/// A key that says which atomic blocks are "the same thing, changed".
++///
++/// - Display equations pair with display equations.
++/// - Raw blocks pair with raw blocks.
++/// - Function calls pair when they call the same function. For `#let`,
++///   `#set`, `#show`, `#import` and `#include`, the next word is part of the
++///   key, so `#let x = 1` pairs with `#let x = 2` but not with `#let y = 2`.
++fn atomic_key(block: &Block) -> Option<String> {
++    match block {
++        Block::Equation { .. } => Some("EQ".into()),
++        Block::RawBlock { .. } => Some("RAW".into()),
++        Block::FuncCall { content } => {
++            let body = content.strip_prefix('#').unwrap_or(content);
++            let ident = |s: &str| -> String {
++                s.chars()
++                    .take_while(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
++                    .collect()
++            };
++            let first = ident(body);
++            if first.is_empty() {
++                return None;
++            }
++            if matches!(
++                first.as_str(),
++                "let" | "set" | "show" | "import" | "include"
++            ) {
++                let rest = body[first.len()..].trim_start();
++                Some(format!("FC:{first} {}", ident(rest)))
++            } else {
++                Some(format!("FC:{first}"))
++            }
++        }
++        _ => None,
++    }
+ }
+ 
+ /// Tokenize text for diffing: ASCII alphanumeric runs form word tokens,
+@@ -366,9 +453,14 @@ mod tests {
+             content: "```rust\nnew code\n```".into(),
+         }];
+         let results = diff(&old, &new);
+-        // Atomic blocks should stay as Delete + Insert, not Modified.
+-        assert!(results.iter().any(|r| matches!(r, DiffResult::Deleted(_))));
+-        assert!(results.iter().any(|r| matches!(r, DiffResult::Added(_))));
++        // Atomic blocks are not diffed word by word: they pair as Changed.
++        assert_eq!(results.len(), 1);
++        assert!(matches!(&results[0], DiffResult::Changed { .. }));
++        assert!(
++            !results
++                .iter()
++                .any(|r| matches!(r, DiffResult::Modified { .. }))
++        );
+     }
+ 
+     #[test]
+@@ -518,6 +610,89 @@ mod tests {
+         );
+     }
+ 
++    fn para(s: &str) -> Block {
++        Block::Paragraph {
++            source_text: s.into(),
++        }
++    }
++
++    #[test]
++    fn test_deleted_equation_stays_in_document_order() {
++        let old = vec![
++            para("The first paragraph about networks."),
++            Block::Equation {
++                block: true,
++                content: "$ a = b $ <eq-old>".into(),
++            },
++            para("The second paragraph about routing."),
++        ];
++        let new = vec![
++            para("The first paragraph about network systems."),
++            para("The second paragraph about routing protocols."),
++        ];
++        let results = diff(&old, &new);
++        assert!(
++            matches!(results[0], DiffResult::Modified { .. }),
++            "{results:?}"
++        );
++        assert!(
++            matches!(&results[1], DiffResult::Deleted(Block::Equation { .. })),
++            "{results:?}"
++        );
++        assert!(
++            matches!(results[2], DiffResult::Modified { .. }),
++            "{results:?}"
++        );
++    }
++
++    #[test]
++    fn test_changed_equation_and_figure_pair_up() {
++        let old = vec![
++            para("Intro."),
++            Block::Equation {
++                block: true,
++                content: "$ a = b $ <eq-int>".into(),
++            },
++            Block::FuncCall {
++                content: "#figure([x], caption: [old]) <fig>".into(),
++            },
++            Block::FuncCall {
++                content: "#let n = 1".into(),
++            },
++        ];
++        let new = vec![
++            para("Intro."),
++            Block::Equation {
++                block: true,
++                content: "$ a = c $ <eq-int>".into(),
++            },
++            Block::FuncCall {
++                content: "#figure([y], caption: [new]) <fig>".into(),
++            },
++            Block::FuncCall {
++                content: "#let n = 2".into(),
++            },
++        ];
++        let results = diff(&old, &new);
++        let changed = results
++            .iter()
++            .filter(|r| matches!(r, DiffResult::Changed { .. }))
++            .count();
++        assert_eq!(changed, 3, "{results:?}");
++        assert!(!results.iter().any(|r| matches!(r, DiffResult::Deleted(_))));
++    }
++
++    #[test]
++    fn test_atomic_key_let_binding_name() {
++        let a = Block::FuncCall {
++            content: "#let x = 1".into(),
++        };
++        let b = Block::FuncCall {
++            content: "#let y = 1".into(),
++        };
++        assert_ne!(atomic_key(&a), atomic_key(&b));
++    }
++
+     #[test]
+     fn test_tokenize_typst_funccall_atomic() {
+         let tokens = tokenize_mixed("before #footnote[https://example.com] after");
+diff --git a/src/lib.rs b/src/lib.rs
+index 2527e38..189bf59 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -19,6 +19,25 @@ impl TypstLabel {
+         let trimmed = text.trim();
+         Self::end(trimmed).is_some_and(|end| end == trimmed.len())
+     }
++
++    /// Split a trailing `<label>` off `text`. Returns the text before the
++    /// label (trimmed at the end) and the label itself, including the angle
++    /// brackets. Returns `(text, None)` when there is no trailing label.
++    pub(crate) fn split_trailing(text: &str) -> (&str, Option<&str>) {
++        let trimmed = text.trim_end();
++        if trimmed.ends_with('>')
++            && let Some(start) = trimmed.rfind('<')
++            && Self::end(&trimmed[start..]) == Some(trimmed.len() - start)
++        {
++            let body = trimmed[..start].trim_end();
++            // Only treat it as a label when something precedes it, so a
++            // bare label stays a label-only paragraph.
++            if !body.is_empty() {
++                return (body, Some(&trimmed[start..]));
++            }
++        }
++        (text, None)
++    }
+ }
+ 
+ /// A block-level element extracted from a Typst document.
+@@ -143,6 +162,12 @@ pub enum DiffResult {
+         kind: BlockKind,
+         spans: Vec<DiffSpan>,
+     },
++    /// An atomic block (equation, function call, raw block) that was
++    /// replaced by a block of the same sort. It is not diffed internally.
++    Changed {
++        old: Block,
++        new: Block,
++    },
+ }
+ 
+ /// A span within a modified block, representing equal, deleted, or inserted text.
+diff --git a/src/main.rs b/src/main.rs
+index c573d4f..cbf1c2c 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -18,6 +18,11 @@ struct Cli {
+     /// Output file path (defaults to stdout)
+     #[arg(short, long)]
+     output: Option<String>,
++
++    /// Omit the definitions of diff-added, diff-deleted and the margin marks.
++    /// Use this when the output imports its own markup definitions.
++    #[arg(long)]
++    no_preamble: bool,
+ }
+ 
+ fn main() -> Result<()> {
+@@ -39,7 +44,10 @@ fn main() -> Result<()> {
+ 
+     let diff_results = typdiff::diff::diff(&old_blocks, &new_blocks);
+ 
+-    let output = typdiff::render::render(&diff_results);
++    let options = typdiff::render::RenderOptions {
++        preamble: !cli.no_preamble,
++    };
++    let output = typdiff::render::render_with(&diff_results, &options);
+ 
+     match cli.output {
+         Some(path) => {
+diff --git a/src/parse.rs b/src/parse.rs
+index 6750db6..4536e4e 100644
+--- a/src/parse.rs
++++ b/src/parse.rs
+@@ -62,10 +62,15 @@ pub fn parse(source: &str) -> Vec<Block> {
+                 });
+             }
+             Expr::Label(_) if paragraph_buf.trim().is_empty() => {
+-                flush_paragraph(&mut paragraph_buf, &mut blocks);
+-                blocks.push(Block::Paragraph {
+-                    source_text: node_text(&expr),
+-                });
++                let label = node_text(&expr);
++                // A label separated from the preceding block only by spaces
++                // or a single newline belongs to that block. Keep it attached
++                // so it still labels the element in the output.
++                if !attach_label(&mut blocks, &label) {
++                    flush_paragraph(&mut paragraph_buf, &mut blocks);
++                    blocks.push(Block::Paragraph { source_text: label });
++                }
++                paragraph_buf.clear();
+             }
+ 
+             // ---- inline elements (accumulate into paragraph) ----
+@@ -168,6 +173,27 @@ fn strip_newline_prefix(text: &str) -> Option<&str> {
+     Some(&text[len..])
+ }
+ 
++/// Attach `label` to the last block when that block can carry a label.
++/// Returns false when there is no such block (for example after a paragraph
++/// break), so the caller keeps the label as its own block.
++fn attach_label(blocks: &mut [Block], label: &str) -> bool {
++    match blocks.last_mut() {
++        Some(Block::Equation { content, .. })
++        | Some(Block::FuncCall { content })
++        | Some(Block::RawBlock { content }) => {
++            content.push(' ');
++            content.push_str(label);
++            true
++        }
++        Some(Block::Heading { body_text, .. }) => {
++            body_text.push(' ');
++            body_text.push_str(label);
++            true
++        }
++        _ => false,
++    }
++}
++
+ /// Flush the paragraph buffer into blocks if non-empty.
+ fn flush_paragraph(buf: &mut String, blocks: &mut Vec<Block>) {
+     let trimmed = buf.trim();
+@@ -330,6 +356,37 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn test_parse_label_on_next_line_attaches_to_equation() {
++        let blocks = parse("Text.\n$ x = 1 $\n<eq-int>\nMore.\n");
++        assert!(
++            blocks.iter().any(
++                |b| matches!(b, Block::Equation { content, .. } if content == "$ x = 1 $ <eq-int>")
++            ),
++            "got: {blocks:?}"
++        );
++        assert!(!blocks.iter().any(
++            |b| matches!(b, Block::Paragraph { source_text } if source_text.contains("<eq-int>"))
++        ));
++    }
++
++    #[test]
++    fn test_parse_label_attaches_to_funccall_and_heading() {
++        let blocks = parse("= Intro\n<intro>\n\n#figure([x], caption: [c]) <fig-x>\n");
++        assert!(
++            matches!(&blocks[0], Block::Heading { body_text, .. } if body_text == "Intro <intro>"),
++            "got: {blocks:?}"
++        );
++        assert!(blocks.iter().any(
++            |b| matches!(b, Block::FuncCall { content } if content == "#figure([x], caption: [c]) <fig-x>")
++        ));
++    }
++
++    #[test]
++    fn test_parse_empty_source() {
++        assert!(parse("").is_empty());
++    }
++
+     #[test]
+     fn test_parse_label_at_paragraph_start_as_own_block() {
+         let blocks = parse("= Sample\n\n<sample-anchor>\nAlpha beta.\n");
+diff --git a/src/render.rs b/src/render.rs
+index 37a775a..52fc2fc 100644
+--- a/src/render.rs
++++ b/src/render.rs
+@@ -10,13 +10,45 @@ const PREAMBLE: &str = r##"#let diff-added(body) = {
+   set text(fill: rgb("#cc0000"))
+   strike(body)
+ }
++#let diff-margin-mark(color, note) = place(left, dx: -1.9cm, box(width: 1.7cm, {
++  set text(size: 7pt, fill: color, weight: "regular", style: "normal")
++  set par(justify: false, first-line-indent: 0pt)
++  box(fill: color, width: 2pt, height: 0.9em)
++  h(2pt)
++  note
++}))
++#let diff-added-mark(note: "added") = diff-margin-mark(rgb("#0000ff"), note)
++#let diff-deleted-mark(note: "deleted") = diff-margin-mark(rgb("#cc0000"), note)
++#let diff-changed-mark(note: "changed") = diff-margin-mark(rgb("#e07000"), note)
+ "##;
+ 
++/// Options that control rendering.
++#[derive(Debug, Clone)]
++pub struct RenderOptions {
++    /// Emit the `#let diff-added`, `#let diff-deleted` and mark definitions
++    /// at the top of the output. Turn this off when the output imports its
++    /// own definitions.
++    pub preamble: bool,
++}
++
++impl Default for RenderOptions {
++    fn default() -> Self {
++        Self { preamble: true }
++    }
++}
++
+ /// Render a list of diff results into a compilable Typst source string.
+ pub fn render(results: &[DiffResult]) -> String {
++    render_with(results, &RenderOptions::default())
++}
++
++/// Render a list of diff results with the given options.
++pub fn render_with(results: &[DiffResult], options: &RenderOptions) -> String {
+     let mut out = String::new();
+-    out.push_str(PREAMBLE);
+-    out.push('\n');
++    if options.preamble {
++        out.push_str(PREAMBLE);
++        out.push('\n');
++    }
+ 
+     for result in results {
+         match result {
+@@ -36,6 +68,10 @@ pub fn render(results: &[DiffResult]) -> String {
+                 render_modified(kind, spans, &mut out);
+                 out.push('\n');
+             }
++            DiffResult::Changed { old, new } => {
++                render_changed(old, new, &mut out);
++                out.push('\n');
++            }
+         }
+         // Always add a blank line between blocks (paragraph break).
+         // Parbreaks are filtered out before diffing, so we insert them
+@@ -46,6 +82,60 @@ pub fn render(results: &[DiffResult]) -> String {
+     out
+ }
+ 
++/// Render an atomic block that was replaced by one of the same sort.
++fn render_changed(old: &Block, new: &Block, out: &mut String) {
++    match (old, new) {
++        (Block::FuncCall { content: old_c }, Block::FuncCall { content: new_c }) => {
++            // Keep the old call as a comment for readers of the source, mark
++            // the change in the margin, then emit the new call unwrapped so
++            // its label and numbering keep working.
++            write_commented(old_c, out);
++            out.push('\n');
++            write_mark(DiffMark::Changed, new_c, out);
++            out.push_str(new_c);
++        }
++        _ => {
++            render_added_or_deleted(old, DiffTag::Deleted, out);
++            out.push_str("\n\n");
++            render_added_or_deleted(new, DiffTag::Added, out);
++        }
++    }
++}
++
++#[derive(Clone, Copy)]
++enum DiffMark {
++    Added,
++    Deleted,
++    Changed,
++}
++
++/// Write a margin mark call for a function-call block, followed by a newline.
++fn write_mark(mark: DiffMark, content: &str, out: &mut String) {
++    let (func, verb) = match mark {
++        DiffMark::Added => ("diff-added-mark", "added"),
++        DiffMark::Deleted => ("diff-deleted-mark", "deleted"),
++        DiffMark::Changed => ("diff-changed-mark", "changed"),
++    };
++    let is_let = content
++        .strip_prefix("#let")
++        .is_some_and(|rest| rest.starts_with(char::is_whitespace));
++    if is_let {
++        writeln!(out, "#{func}(note: \"definition {verb}\")").unwrap();
++    } else {
++        writeln!(out, "#{func}()").unwrap();
++    }
++}
++
++/// Write code as `//` comments, without a trailing newline.
++fn write_commented(content: &str, out: &mut String) {
++    for line in content.lines() {
++        writeln!(out, "// {line}").unwrap();
++    }
++    if out.ends_with('\n') {
++        out.pop();
++    }
++}
++
+ #[derive(Clone, Copy, PartialEq, Eq)]
+ enum DiffTag {
+     Added,
+@@ -118,9 +208,29 @@ fn render_added_or_deleted(block: &Block, tag: DiffTag, out: &mut String) {
+             )
+             .unwrap();
+         }
++        Block::Heading { depth, body_text } if tag == DiffTag::Deleted => {
++            // A deleted heading must not take a section number, or every
++            // later heading would be numbered one too high. Its label is
++            // dropped so it cannot clash with the new document's labels.
++            let (body, _label) = TypstLabel::split_trailing(body_text);
++            write!(
++                out,
++                "#heading(depth: {}, numbering: none, outlined: false, bookmarked: false)[#{}[{}]]",
++                depth,
++                func,
++                escape_content(body, escape_refs)
++            )
++            .unwrap();
++        }
+         Block::Heading { depth, body_text } => {
++            // The label goes after the wrapper so it labels the heading, not
++            // the styled text inside it.
++            let (body, label) = TypstLabel::split_trailing(body_text);
+             write_heading_prefix(*depth, out);
+-            write!(out, "#{}[{}]", func, escape_content(body_text, escape_refs)).unwrap();
++            write!(out, "#{}[{}]", func, escape_content(body, escape_refs)).unwrap();
++            if let Some(label) = label {
++                write!(out, " {label}").unwrap();
++            }
+         }
+         Block::ListItem { body_text } => {
+             out.push_str("- ");
+@@ -142,24 +252,40 @@ fn render_added_or_deleted(block: &Block, tag: DiffTag, out: &mut String) {
+             .unwrap();
+         }
+         // Raw blocks and equations are content-mode; they can be wrapped.
+-        Block::RawBlock { content } | Block::Equation { content, .. } => {
+-            write!(out, "#{}[{}]", func, escape_content(content, escape_refs)).unwrap();
++        // An added block keeps its label inside the wrapper, where it attaches
++        // to the equation itself rather than to the styled wrapper.
++        Block::RawBlock { content } | Block::Equation { content, .. } if tag == DiffTag::Added => {
++            write!(out, "#{}[{}]", func, escape_content(content, false)).unwrap();
+         }
+-        // FuncCall represents code-mode expressions (#import, #show, etc.).
+-        // Wrapping them in a content block would change their semantics,
+-        // so we output added code as-is and deleted code as comments.
++        // A deleted block drops its label (the new document may define the
++        // same label) and is not numbered.
++        Block::RawBlock { content } => {
++            let (body, _label) = TypstLabel::split_trailing(content);
++            write!(out, "#{}[{}]", func, escape_content(body, escape_refs)).unwrap();
++        }
++        Block::Equation { content, .. } => {
++            let (body, _label) = TypstLabel::split_trailing(content);
++            write!(
++                out,
++                "#{}[#set math.equation(numbering: none)\n{}]",
++                func,
++                escape_content(body, escape_refs)
++            )
++            .unwrap();
++        }
++        // FuncCall represents code-mode expressions (#figure, #let, #import,
++        // #show, etc.). Wrapping them in a content block would change their
++        // semantics and hide their labels, so an added call is output as-is
++        // after an "added" margin mark. A deleted call is not run at all (it
++        // could define names, take a figure number or carry a duplicate
++        // label): it is left as comments after a "deleted" margin mark.
+         Block::FuncCall { content } => {
+             if tag == DiffTag::Added {
++                write_mark(DiffMark::Added, content, out);
+                 out.push_str(content);
+             } else {
+-                for line in content.lines() {
+-                    write!(out, "// {line}").unwrap();
+-                    out.push('\n');
+-                }
+-                // Remove the trailing newline since the caller adds one.
+-                if out.ends_with('\n') {
+-                    out.pop();
+-                }
++                write_mark(DiffMark::Deleted, content, out);
++                write_commented(content, out);
+             }
+         }
+         Block::Parbreak => {} // paragraph breaks have no visual content to mark
+@@ -366,6 +492,120 @@ mod tests {
+         assert!(output.contains("#let diff-deleted"));
+     }
+ 
++    #[test]
++    fn test_render_no_preamble() {
++        let results = vec![DiffResult::Added(Block::Paragraph {
++            source_text: "New".into(),
++        })];
++        let output = render_with(&results, &RenderOptions { preamble: false });
++        assert!(!output.contains("#let"));
++        assert!(output.starts_with("#diff-added[New]"));
++    }
++
++    #[test]
++    fn test_render_preamble_defines_marks() {
++        let output = render(&[]);
++        for name in ["diff-added-mark", "diff-deleted-mark", "diff-changed-mark"] {
++            assert!(output.contains(&format!("#let {name}(")), "missing {name}");
++        }
++    }
++
++    #[test]
++    fn test_render_added_equation_keeps_label_inside() {
++        let results = vec![DiffResult::Added(Block::Equation {
++            block: true,
++            content: "$ x = 1 $ <eq-int>".into(),
++        })];
++        let output = render(&results);
++        assert!(
++            output.contains("#diff-added[$ x = 1 $ <eq-int>]"),
++            "{output}"
++        );
++    }
++
++    #[test]
++    fn test_render_deleted_equation_unnumbered_without_label() {
++        let results = vec![DiffResult::Deleted(Block::Equation {
++            block: true,
++            content: "$ x = 1 $ <eq-int>".into(),
++        })];
++        let output = render(&results);
++        assert!(
++            output.contains("#diff-deleted[#set math.equation(numbering: none)\n$ x = 1 $]"),
++            "{output}"
++        );
++        assert!(!output.contains("eq-int"));
++    }
++
++    #[test]
++    fn test_render_changed_funccall_marked_not_wrapped() {
++        let results = vec![DiffResult::Changed {
++            old: Block::FuncCall {
++                content: "#figure([a], caption: [old]) <fig-table>".into(),
++            },
++            new: Block::FuncCall {
++                content: "#figure([b], caption: [new]) <fig-table>".into(),
++            },
++        }];
++        let output = render(&results);
++        assert!(
++            output.contains("#diff-changed-mark()\n#figure([b], caption: [new]) <fig-table>"),
++            "{output}"
++        );
++        assert!(output.contains("// #figure([a], caption: [old]) <fig-table>"));
++        assert!(!output.contains("#diff-added[#figure"));
++    }
++
++    #[test]
++    fn test_render_changed_let_has_definition_note() {
++        let results = vec![DiffResult::Changed {
++            old: Block::FuncCall {
++                content: "#let n = 1".into(),
++            },
++            new: Block::FuncCall {
++                content: "#let n = 2".into(),
++            },
++        }];
++        let output = render(&results);
++        assert!(output.contains("#diff-changed-mark(note: \"definition changed\")\n#let n = 2"));
++    }
++
++    #[test]
++    fn test_render_added_and_deleted_funccall_marks() {
++        let added = render(&[DiffResult::Added(Block::FuncCall {
++            content: "#figure([a]) <f>".into(),
++        })]);
++        assert!(added.contains("#diff-added-mark()\n#figure([a]) <f>"));
++        let deleted = render(&[DiffResult::Deleted(Block::FuncCall {
++            content: "#figure([a]) <f>".into(),
++        })]);
++        assert!(deleted.contains("#diff-deleted-mark()\n// #figure([a]) <f>"));
++        assert!(!deleted.contains("\n#figure"));
++    }
++
++    #[test]
++    fn test_render_deleted_heading_unnumbered() {
++        let output = render(&[DiffResult::Deleted(Block::Heading {
++            depth: 2,
++            body_text: "Old <old-sec>".into(),
++        })]);
++        assert!(output.contains(
++            "#heading(depth: 2, numbering: none, outlined: false, bookmarked: false)[#diff-deleted[Old]]"
++        ), "{output}");
++    }
++
++    #[test]
++    fn test_render_added_heading_label_outside_wrapper() {
++        let output = render(&[DiffResult::Added(Block::Heading {
++            depth: 2,
++            body_text: "Method <method>".into(),
++        })]);
++        assert!(
++            output.contains("== #diff-added[Method] <method>"),
++            "{output}"
++        );
++    }
++
+     #[test]
+     fn test_render_unchanged() {
+         let results = vec![DiffResult::Unchanged(Block::Paragraph {
+diff --git a/tests/fixtures/thesis-ch1-new.typ b/tests/fixtures/thesis-ch1-new.typ
+new file mode 100644
+index 0000000..00b6e52
+--- /dev/null
++++ b/tests/fixtures/thesis-ch1-new.typ
+@@ -0,0 +1,32 @@
++#let rate = 20
++
++= Introduction
++<intro>
++
++This chapter studies the definite integral $integral_0^1 x dif x$ of a simple function, following @knuth84 and @lamport94.
++The rate is #rate per step.
++
++$ integral_0^1 x^3 dif x = 1/4 $
++<eq-int>
++
++The value in @eq-int is small. We first state a helper bound.
++
++The bound used to hold for positive values.
++
++#figure(
++  table(
++    columns: 2,
++    [Method], [Error],
++    [Old], [0.10],
++    [New], [0.02],
++  ),
++  caption: [Errors of the old and new methods.],
++) <fig-table>
++
++@fig-table lists the errors.
++
++$ p = h nu $ <eq-new>
++
++$ e = m c^2 $ <eq-last>
++
++Equation @eq-last closes the chapter, and @eq-new is new.
+diff --git a/tests/fixtures/thesis-ch1-old.typ b/tests/fixtures/thesis-ch1-old.typ
+new file mode 100644
+index 0000000..91526a2
+--- /dev/null
++++ b/tests/fixtures/thesis-ch1-old.typ
+@@ -0,0 +1,32 @@
++#let rate = 10
++
++= Introduction
++<intro>
++
++This chapter studies the integral $integral_0^1 x dif x$ of a simple function, following @knuth84.
++The rate is #rate per step.
++
++$ integral_0^1 x^2 dif x = 1/3 $
++<eq-int>
++
++The value in @eq-int is small. We first state a helper bound.
++
++$ a + b >= 2 sqrt(a b) $
++<eq-amgm>
++
++The bound in @eq-amgm holds for positive values.
++
++#figure(
++  table(
++    columns: 2,
++    [Method], [Error],
++    [Old], [0.10],
++  ),
++  caption: [Errors of the old method.],
++) <fig-table>
++
++@fig-table lists the errors.
++
++$ e = m c^2 $ <eq-last>
++
++Equation @eq-last closes the chapter.
+diff --git a/tests/fixtures/thesis-ch3-new.typ b/tests/fixtures/thesis-ch3-new.typ
+new file mode 100644
+index 0000000..bd285fa
+--- /dev/null
++++ b/tests/fixtures/thesis-ch3-new.typ
+@@ -0,0 +1,12 @@
++#let gain = 3
++
++= Outlook
++<outlook>
++
++A new chapter with gain #gain, building on @eq-int.
++
++$ y = #gain x $ <eq-gain>
++
++#figure(rect[box], caption: [A new figure.]) <fig-box>
++
++See @eq-gain, @fig-box and @outlook.
+diff --git a/tests/integration.rs b/tests/integration.rs
+index dacad43..9acb65b 100644
+--- a/tests/integration.rs
++++ b/tests/integration.rs
+@@ -209,3 +209,138 @@ fn test_indented_line_comment_does_not_split_paragraph() {
+     // A whitespace-only line would be treated as a paragraph break by Typst.
+     assert!(!output.contains("\n  \n"));
+ }
++
++const THESIS_OLD: &str = include_str!("fixtures/thesis-ch1-old.typ");
++const THESIS_NEW: &str = include_str!("fixtures/thesis-ch1-new.typ");
++
++/// Body of the output, without the preamble.
++fn body(output: &str) -> &str {
++    let marker = "#let diff-changed-mark";
++    let start = output.find(marker).expect("preamble present");
++    let rest = &output[start..];
++    &rest[rest.find('\n').unwrap()..]
++}
++
++#[test]
++fn test_label_on_own_line_stays_on_changed_equation() {
++    // Defect 1: the label must sit inside the added wrapper, right after the
++    // equation, and never as a separate block after the wrapper.
++    let output = run_diff(THESIS_OLD, THESIS_NEW);
++    assert!(
++        output.contains("#diff-added[$ integral_0^1 x^3 dif x = 1/4 $ <eq-int>]"),
++        "{output}"
++    );
++    assert!(!output.contains("]\n\n<eq-int>"), "{output}");
++    assert_eq!(output.matches("<eq-int>").count(), 1, "{output}");
++}
++
++#[test]
++fn test_label_attaches_to_unchanged_heading() {
++    let output = run_diff(THESIS_OLD, THESIS_NEW);
++    assert!(output.contains("= Introduction <intro>"), "{output}");
++}
++
++#[test]
++fn test_deleted_equation_in_document_order() {
++    // Defect 2: the deleted equation comes after "helper bound." and before
++    // the paragraph that followed it in the old file.
++    let output = run_diff(THESIS_OLD, THESIS_NEW);
++    let helper = output.find("helper bound.").unwrap();
++    let deleted = output.find("$ a + b >= 2 sqrt(a b) $").unwrap();
++    let after = output.find("for positive values.").unwrap();
++    assert!(helper < deleted && deleted < after, "{output}");
++}
++
++#[test]
++fn test_deleted_equation_unnumbered_and_unlabelled() {
++    // Defect 3 and the "deleted label is dropped" part of defect 1.
++    let output = run_diff(THESIS_OLD, THESIS_NEW);
++    assert!(
++        output.contains(
++            "#diff-deleted[#set math.equation(numbering: none)\n$ a + b >= 2 sqrt(a b) $]"
++        ),
++        "{output}"
++    );
++    assert!(!output.contains("<eq-amgm>"), "{output}");
++    assert!(
++        output.contains("#diff-deleted[#set math.equation(numbering: none)\n$ integral_0^1 x^2"),
++        "{output}"
++    );
++}
++
++#[test]
++fn test_changed_figure_gets_mark_and_stays_unwrapped() {
++    // Defect 4.
++    let output = run_diff(THESIS_OLD, THESIS_NEW);
++    assert!(
++        output.contains("#diff-changed-mark()\n#figure(\n"),
++        "{output}"
++    );
++    assert!(output.contains("\n) <fig-table>"), "{output}");
++    assert!(!output.contains("#diff-added[#figure"), "{output}");
++    assert_eq!(output.matches("\n) <fig-table>").count(), 1, "{output}");
++}
++
++#[test]
++fn test_changed_let_gets_mark() {
++    // Defect 5.
++    let output = run_diff(THESIS_OLD, THESIS_NEW);
++    assert!(
++        output.contains("#diff-changed-mark(note: \"definition changed\")\n#let rate = 20"),
++        "{output}"
++    );
++    assert!(output.contains("// #let rate = 10"), "{output}");
++}
++
++#[test]
++fn test_added_equation_keeps_label() {
++    let output = run_diff(THESIS_OLD, THESIS_NEW);
++    assert!(
++        output.contains("#diff-added[$ p = h nu $ <eq-new>]"),
++        "{output}"
++    );
++}
++
++#[test]
++fn test_no_preamble_option() {
++    // Defect 6.
++    let old: Vec<_> = parse(THESIS_OLD)
++        .into_iter()
++        .filter(|b| !matches!(b, typdiff::Block::Parbreak))
++        .collect();
++    let new: Vec<_> = parse(THESIS_NEW)
++        .into_iter()
++        .filter(|b| !matches!(b, typdiff::Block::Parbreak))
++        .collect();
++    let results = diff(&old, &new);
++    let with = render(&results);
++    let without = typdiff::render::render_with(
++        &results,
++        &typdiff::render::RenderOptions { preamble: false },
++    );
++    assert!(!without.contains("#let diff-"));
++    assert!(without.starts_with("// #let rate = 10"), "{without}");
++    assert_eq!(body(&with).trim_start(), without.trim_start());
++}
++
++#[test]
++fn test_empty_old_file_marks_everything_added() {
++    // Defect 7: a chapter added in the new version is diffed against an
++    // empty file.
++    let new = include_str!("fixtures/thesis-ch3-new.typ");
++    let output = run_diff("", new);
++    let body = body(&output);
++    assert!(!body.contains("#diff-deleted"), "{body}");
++    assert!(body.contains("= #diff-added[Outlook] <outlook>"), "{body}");
++    assert!(
++        body.contains("#diff-added[$ y = #gain x $ <eq-gain>]"),
++        "{body}"
++    );
++    assert!(
++        body.contains("#diff-added-mark(note: \"definition added\")\n#let gain = 3"),
++        "{body}"
++    );
++    assert!(
++        body.contains("#diff-added-mark()\n#figure(rect[box], caption: [A new figure.]) <fig-box>")
++    );
++}
+-- 
+2.55.0
+
