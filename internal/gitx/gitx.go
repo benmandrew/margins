@@ -258,7 +258,8 @@ func (m *Mirror) ReadFile(ctx context.Context, sha, path string) (data []byte, o
 	if err := checkSHA(sha); err != nil {
 		return nil, false, err
 	}
-	if !config.RelPath.MatchString(path) {
+	// RelPath refuses dot-files, so the one the service reads is named.
+	if !config.RelPath.MatchString(path) && path != config.BuildFile {
 		return nil, false, fmt.Errorf("path %q", path)
 	}
 	out, err := m.git(ctx, "cat-file", "blob", sha+":"+path)

@@ -183,6 +183,7 @@ type Compile struct {
 // never for a document that fails to compile.
 type Result struct {
 	Status   string // "ok", "failed" or "timeout"
+	ExitCode int
 	Log      []byte
 	Duration time.Duration
 	Size     int64
@@ -194,6 +195,8 @@ const maxLog = 1 << 20
 func (c Compile) Run(ctx context.Context) (Result, error) {
 	args := []string{
 		"compile",
+		// Explicit, since outputs are written to a temporary name first.
+		"--format", "pdf",
 		"--root", c.Root,
 		"--creation-timestamp", strconv.FormatInt(c.Timestamp, 10),
 		"--package-cache-path", c.PackageCache,
@@ -236,6 +239,7 @@ func run(ctx context.Context, timeout time.Duration, maxOutput int64, out, home,
 			return res, fmt.Errorf("running %s: %w", filepath.Base(name), err)
 		}
 		res.Status = "failed"
+		res.ExitCode = ee.ExitCode()
 		return res, nil
 	}
 	if out != "" {
@@ -257,7 +261,9 @@ func run(ctx context.Context, timeout time.Duration, maxOutput int64, out, home,
 	return res, nil
 }
 
-// Tool runs one of the diff tools under the same limits as a compile.
+// Tool runs one of the diff tools under the same limits as a compile. Tools
+// that report a difference through their exit code come back as "failed"
+// with ExitCode set; the caller decides what that means.
 func Tool(ctx context.Context, timeout time.Duration, maxOutput int64, out, home, name string, args ...string) (Result, error) {
 	return run(ctx, timeout, maxOutput, out, home, name, args...)
 }

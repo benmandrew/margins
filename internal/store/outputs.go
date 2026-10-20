@@ -319,3 +319,30 @@ func (s *Store) MarkAnnotatedPruned(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE annotated SET pruned = 1 WHERE id = ?", id)
 	return err
 }
+
+// ResetInterrupted puts every build, diff and annotated build left in
+// building by a crash or restart back to queued.
+func (s *Store) ResetInterrupted(ctx context.Context) error {
+	for _, table := range []string{"builds", "diffs", "annotated"} {
+		if _, err := s.db.ExecContext(ctx,
+			"UPDATE "+table+" SET status = 'queued' WHERE status = 'building'"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AnnotatedWithStatus lists annotated builds in one state.
+func (s *Store) AnnotatedWithStatus(ctx context.Context, st Status) ([]Annotated, error) {
+	all, err := s.AllAnnotated(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Annotated
+	for _, a := range all {
+		if a.Status == st {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}

@@ -2,6 +2,9 @@ package config
 
 import "regexp"
 
+// BuildFile is the per-commit build configuration in the thesis repository.
+const BuildFile = ".typst-review.toml"
+
 // Strict patterns for every name that reaches a path or a git argument. None
 // of them can start with '-', so no value can be read as a git option, and
 // none admits a '..' path segment.
