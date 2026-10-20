@@ -4,12 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 
 	"git.benmandrew.com/me/thesis/internal/config"
@@ -923,15 +923,6 @@ func (s *Server) choices(ctx context.Context) []choice {
 
 func parsePlacements(js string) map[string]string {
 	out := map[string]string{}
-	js = strings.Trim(js, "{}")
-	for _, kv := range strings.Split(js, ",") {
-		k, v, ok := strings.Cut(kv, ":")
-		if !ok {
-			continue
-		}
-		k, _ = strconv.Unquote(strings.TrimSpace(k))
-		v, _ = strconv.Unquote(strings.TrimSpace(v))
-		out[k] = v
-	}
+	json.Unmarshal([]byte(js), &out)
 	return out
 }

@@ -548,6 +548,9 @@ func TestNotes(t *testing.T) {
 		t.Errorf("annotated: %s %q", res.Status, res.Header.Get("Cache-Control"))
 	}
 
+	if _, body := ben.get("/notes"); !strings.Contains(body, "placed anchor") {
+		t.Errorf("notes page does not show the placement")
+	}
 	if res := ben.postForm("/notes/"+id+"/resolve", url.Values{}); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("author resolve: %s", res.Status)
 	}
