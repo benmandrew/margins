@@ -21,8 +21,8 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"git.benmandrew.com/me/thesis/internal/config"
-	"git.benmandrew.com/me/thesis/internal/store"
+	"git.benmandrew.com/me/margins/internal/config"
+	"git.benmandrew.com/me/margins/internal/store"
 )
 
 const (

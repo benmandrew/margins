@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"git.benmandrew.com/me/thesis/internal/store"
-	"git.benmandrew.com/me/thesis/internal/typst"
+	"git.benmandrew.com/me/margins/internal/store"
+	"git.benmandrew.com/me/margins/internal/typst"
 )
 
 //go:embed assets/diff-markup.typ

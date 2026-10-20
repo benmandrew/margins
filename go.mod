@@ -1,4 +1,4 @@
-module git.benmandrew.com/me/thesis
+module git.benmandrew.com/me/margins
 
 go 1.26.9
 

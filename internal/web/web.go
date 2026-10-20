@@ -16,10 +16,10 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"git.benmandrew.com/me/thesis/internal/config"
-	"git.benmandrew.com/me/thesis/internal/service"
-	"git.benmandrew.com/me/thesis/internal/store"
-	"git.benmandrew.com/me/thesis/internal/webhook"
+	"git.benmandrew.com/me/margins/internal/config"
+	"git.benmandrew.com/me/margins/internal/service"
+	"git.benmandrew.com/me/margins/internal/store"
+	"git.benmandrew.com/me/margins/internal/webhook"
 )
 
 //go:embed templates/*.html

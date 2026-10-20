@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"git.benmandrew.com/me/thesis/internal/config"
+	"git.benmandrew.com/me/margins/internal/config"
 )
 
 type Mirror struct {

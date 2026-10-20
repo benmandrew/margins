@@ -14,8 +14,8 @@ import (
 	"sort"
 	"strconv"
 
-	"git.benmandrew.com/me/thesis/internal/config"
-	"git.benmandrew.com/me/thesis/internal/store"
+	"git.benmandrew.com/me/margins/internal/config"
+	"git.benmandrew.com/me/margins/internal/store"
 )
 
 //go:embed assets/review-notes.typ

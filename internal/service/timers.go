@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"git.benmandrew.com/me/thesis/internal/store"
+	"git.benmandrew.com/me/margins/internal/store"
 )
 
 // timers starts each maintenance task at boot and then on its interval. A

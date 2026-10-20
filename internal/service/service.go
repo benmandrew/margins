@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"git.benmandrew.com/me/thesis/internal/config"
-	"git.benmandrew.com/me/thesis/internal/gitx"
-	"git.benmandrew.com/me/thesis/internal/store"
-	"git.benmandrew.com/me/thesis/internal/typst"
+	"git.benmandrew.com/me/margins/internal/config"
+	"git.benmandrew.com/me/margins/internal/gitx"
+	"git.benmandrew.com/me/margins/internal/store"
+	"git.benmandrew.com/me/margins/internal/typst"
 )
 
 // Tools names the external programs. Each is looked up on PATH unless set.

@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 
-	"git.benmandrew.com/me/thesis/internal/gitx"
-	"git.benmandrew.com/me/thesis/internal/store"
+	"git.benmandrew.com/me/margins/internal/gitx"
+	"git.benmandrew.com/me/margins/internal/store"
 )
 
 // carryNotes anchors every open note at sha, from the note's nearest anchor

@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"git.benmandrew.com/me/thesis/internal/gitx"
-	"git.benmandrew.com/me/thesis/internal/store"
+	"git.benmandrew.com/me/margins/internal/gitx"
+	"git.benmandrew.com/me/margins/internal/store"
 )
 
 // fetch updates the mirror and processes whatever changed. A webhook push and

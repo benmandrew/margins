@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"git.benmandrew.com/me/thesis/internal/store"
-	"git.benmandrew.com/me/thesis/internal/typst"
+	"git.benmandrew.com/me/margins/internal/store"
+	"git.benmandrew.com/me/margins/internal/typst"
 )
 
 // buildCommit builds every entrypoint of a commit that has no finished build

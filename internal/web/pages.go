@@ -12,9 +12,9 @@ import (
 	"slices"
 	"strings"
 
-	"git.benmandrew.com/me/thesis/internal/config"
-	"git.benmandrew.com/me/thesis/internal/service"
-	"git.benmandrew.com/me/thesis/internal/store"
+	"git.benmandrew.com/me/margins/internal/config"
+	"git.benmandrew.com/me/margins/internal/service"
+	"git.benmandrew.com/me/margins/internal/store"
 )
 
 // resolve turns a commit name from a URL into a full SHA the service knows.

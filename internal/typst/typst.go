@@ -23,7 +23,7 @@ import (
 
 	"github.com/ulikunitz/xz"
 
-	"git.benmandrew.com/me/thesis/internal/config"
+	"git.benmandrew.com/me/margins/internal/config"
 )
 
 // DefaultBaseURL is where official release archives live.

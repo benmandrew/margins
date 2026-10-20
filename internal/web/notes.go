@@ -9,8 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"git.benmandrew.com/me/thesis/internal/config"
-	"git.benmandrew.com/me/thesis/internal/store"
+	"git.benmandrew.com/me/margins/internal/config"
+	"git.benmandrew.com/me/margins/internal/store"
 )
 
 const maxSelected = 2000

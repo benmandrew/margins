@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.benmandrew.com/me/thesis/internal/gitx"
+	"git.benmandrew.com/me/margins/internal/gitx"
 )
 
 func TestScanMarkup(t *testing.T) {

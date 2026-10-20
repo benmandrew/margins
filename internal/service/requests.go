@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"slices"
 
-	"git.benmandrew.com/me/thesis/internal/store"
+	"git.benmandrew.com/me/margins/internal/store"
 )
 
 // ErrQueueFull means too many diffs are already queued; the caller answers

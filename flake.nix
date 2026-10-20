@@ -130,7 +130,7 @@
           # nothing else. No shell, no package manager. Load it with
           # `nix build .#image && ./result | docker load`.
           image = pkgs.dockerTools.streamLayeredImage {
-            name = "benmandrew/thesis";
+            name = "benmandrew/margins";
             tag = "latest";
             contents = [
               (pkgs.buildEnv {
