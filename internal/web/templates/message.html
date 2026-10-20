@@ -1,0 +1,17 @@
+{{define "content"}}{{with .Data}}
+<h1>{{.Heading}}</h1>
+<p>{{.Text}}</p>
+{{- if .Form}}
+<form method="post" action="{{.Form.Action}}">
+  <input type="hidden" name="csrf" value="{{$.Viewer.CSRF}}">
+  {{- range $k, $v := .Form.Fields}}
+  <input type="hidden" name="{{$k}}" value="{{$v}}">
+  {{- end}}
+  <button type="submit">{{.Form.Label}}</button>
+</form>
+{{- end}}
+{{- if .Log}}
+<h2>Log</h2>
+<pre class="log">{{.Log}}</pre>
+{{- end}}
+{{end}}{{end}}

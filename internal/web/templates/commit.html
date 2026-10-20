@@ -1,0 +1,31 @@
+{{define "content"}}{{with .Data}}
+<h1>{{.Commit.Subject}}</h1>
+<p class="meta"><span class="sha">{{.Commit.SHA}}</span>{{range .Tags}} <span class="tag">{{.}}</span>{{end}} · {{.Commit.Author}} · {{date .Commit.CommittedAt}}{{if .Commit.Unreachable}} · <strong>no longer on any branch</strong>{{end}}</p>
+<p class="actions">
+  <a href="/source/{{.Commit.SHA}}">Source and notes</a>
+  {{- if .Parent}} · <a href="/compare?a={{.Parent}}&amp;b={{.Commit.SHA}}">Diff vs parent</a>{{end}}
+</p>
+{{- if gt (len .Entries) 1}}
+<nav class="entries">{{range .Entries}}<a href="/c/{{$.Data.Commit.SHA}}?entry={{.Name}}"{{if eq .Entry $.Data.Selected.Entry}} aria-current="page"{{end}}>{{.Name}}</a> {{end}}</nav>
+{{- end}}
+{{- with .Selected}}
+<p>Build of {{.Entry}}: <span class="status {{.Build.Status}}">{{.Build.Status}}</span>{{if .Build.Typst}} with Typst {{.Build.Typst}}{{end}}</p>
+{{- if eq (print .Build.Status) "ok"}}
+<p class="actions">
+  <a href="/c/{{$.Data.Commit.SHA}}.pdf{{.Suffix}}">Open PDF</a> ·
+  <a href="/c/{{$.Data.Commit.SHA}}.pdf{{.Suffix}}?download">Download</a>
+  {{- if $.Data.Notes}} · <a href="/c/{{$.Data.Commit.SHA}}.notes.pdf{{.Suffix}}">PDF with {{len $.Data.Notes}} notes</a>{{end}}
+</p>
+{{- if $.Data.Notes}}
+<iframe class="pdf" src="/c/{{$.Data.Commit.SHA}}.notes.pdf{{.Suffix}}" title="Annotated PDF"></iframe>
+{{- else}}
+<iframe class="pdf" src="/c/{{$.Data.Commit.SHA}}.pdf{{.Suffix}}" title="PDF"></iframe>
+{{- end}}
+{{- else if .Log}}
+<h2>Build log</h2>
+<pre class="log">{{.Log}}</pre>
+{{- else}}
+<p><a href="/c/{{$.Data.Commit.SHA}}.pdf{{.Suffix}}">Build this commit</a></p>
+{{- end}}
+{{- end}}
+{{end}}{{end}}

@@ -1,0 +1,59 @@
+{{define "content"}}{{with .Data}}
+<h1>Notes</h1>
+<form class="inline" method="get" action="/notes">
+  <label>State <select name="state">
+    {{- range $s := (list "open" "resolved" "outdated" "all")}}
+    <option value="{{$s}}"{{if eq $s $.Data.State}} selected{{end}}>{{$s}}</option>
+    {{- end}}
+  </select></label>
+  <label>By <select name="user">
+    <option value="">anyone</option>
+    {{- range .Users}}
+    <option value="{{.ID}}"{{if eq .ID $.Data.User}} selected{{end}}>{{.Name}}</option>
+    {{- end}}
+  </select></label>
+  {{- if .SHA}}<input type="hidden" name="sha" value="{{.SHA}}">{{end}}
+  <button type="submit">Filter</button>
+</form>
+{{- if not .Notes}}
+<p>No notes match.</p>
+{{- end}}
+{{- range .Notes}}
+<article class="note {{.State}}" id="{{.Ref}}">
+  <header>
+    <strong>{{.User}}</strong> on
+    <a href="/source/{{.Origin.SHA}}?file={{query .Origin.File}}#L{{.Origin.Line}}">{{.Origin.File}}:{{.Origin.Line}}</a>
+    at <a class="sha" href="/c/{{.Origin.SHA}}">{{short .Origin.SHA}}</a>
+    · {{date .CreatedAt}} · <span class="state">{{.State}}</span>
+    {{- if .Placement}} · placed {{.Placement}}{{end}}
+    {{- if .ResolvedBy}} · resolved by {{.ResolvedBy}}{{end}}
+  </header>
+  {{- if .Selected}}<blockquote>{{.Selected}}</blockquote>{{end}}
+  <p class="body">{{.Body}}</p>
+  <div class="note-actions">
+  {{- if and .Mine (eq (print .State) "open")}}
+    <details><summary>Edit</summary>
+    <form method="post" action="/notes/{{.ID}}/edit">
+      <input type="hidden" name="csrf" value="{{$.Viewer.CSRF}}">
+      <input type="hidden" name="back" value="/notes#{{.Ref}}">
+      <textarea name="body" rows="4" required>{{.Body}}</textarea>
+      <button type="submit">Save</button>
+    </form>
+    </details>
+    <form method="post" action="/notes/{{.ID}}/delete">
+      <input type="hidden" name="csrf" value="{{$.Viewer.CSRF}}">
+      <input type="hidden" name="back" value="/notes">
+      <button type="submit">Delete</button>
+    </form>
+  {{- end}}
+  {{- if and $.Viewer.IsAuthor (ne (print .State) "resolved")}}
+    <form method="post" action="/notes/{{.ID}}/resolve">
+      <input type="hidden" name="csrf" value="{{$.Viewer.CSRF}}">
+      <input type="hidden" name="back" value="/notes">
+      <button type="submit">Resolve</button>
+    </form>
+  {{- end}}
+  </div>
+</article>
+{{- end}}
+{{end}}{{end}}

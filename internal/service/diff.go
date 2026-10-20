@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -266,5 +265,3 @@ func (s *Service) textDiff(ctx context.Context, d store.Diff) (typst.Result, err
 func failed(format string, args ...any) typst.Result {
 	return typst.Result{Status: "failed", Log: fmt.Appendf(nil, "[thesis] "+format+"\n", args...)}
 }
-
-var errQueueFull = errors.New("diff queue is full")

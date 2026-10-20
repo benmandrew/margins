@@ -87,9 +87,9 @@ func (s *Service) NotesJSON(notes []store.PlacedNote) ([]byte, string, error) {
 }
 
 // RequestAnnotated returns the annotated build of (sha, entry) for its
-// current notes, queuing it if needed. ok is false when the commit has no
-// notes to show.
-func (s *Service) RequestAnnotated(ctx context.Context, sha, entry string) (a store.Annotated, ok bool, err error) {
+// current notes, and queues it if needed and queue is set. ok is false when
+// the commit has no notes to show.
+func (s *Service) RequestAnnotated(ctx context.Context, sha, entry string, queue bool) (a store.Annotated, ok bool, err error) {
 	notes, err := s.AnnotationNotes(ctx, sha)
 	if err != nil || len(notes) == 0 {
 		return a, false, err
@@ -106,7 +106,7 @@ func (s *Service) RequestAnnotated(ctx context.Context, sha, entry string) (a st
 	if err != nil {
 		return a, false, err
 	}
-	if a.Status == store.Queued || a.Status == store.Timeout || a.Status == store.OK && a.Pruned {
+	if queue && (a.Status == store.Queued || a.Status == store.Timeout || a.Status == store.OK && a.Pruned) {
 		if a.Status != store.Queued {
 			if err := s.Store.RequeueAnnotated(ctx, a.ID); err != nil {
 				return a, false, err

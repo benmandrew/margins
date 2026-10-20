@@ -1,0 +1,7 @@
+{{define "content"}}{{with .Data}}
+<h1>Set up your passkey</h1>
+<p>Hello {{.Name}}. This page creates a passkey for this site on your device or phone. You use it to log in from now on; there is no password.</p>
+<button id="enrol" type="button" data-user="{{.ID}}">Create a passkey</button>
+<p id="status" class="status" role="status"></p>
+<script src="/static/auth.js"></script>
+{{end}}{{end}}

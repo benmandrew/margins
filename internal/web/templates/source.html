@@ -1,0 +1,37 @@
+{{define "content"}}{{with .Data}}
+<h1>Source at <a class="sha" href="/c/{{.Commit.SHA}}">{{short .Commit.SHA}}</a></h1>
+<p class="meta">{{.Commit.Subject}}</p>
+{{- if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+<nav class="files">
+{{- range .Files}}
+  <a href="/source/{{$.Data.Commit.SHA}}?file={{query .}}"{{if eq . $.Data.File}} aria-current="page"{{end}}>{{.}}</a>
+{{- end}}
+</nav>
+{{- if .File}}
+<div class="source-layout">
+<table class="source" id="source" data-file="{{.File}}">
+<tbody>
+{{- range .Lines}}
+<tr id="L{{.N}}"><td class="ln">{{.N}}</td><td class="code" data-line="{{.N}}">{{.Text}}</td>
+<td class="margin">{{range .Notes}}<div class="note-mark {{.State}}" title="{{.UserID}}: {{.Body}}">{{.Ref}}</div>{{end}}</td></tr>
+{{- end}}
+</tbody>
+</table>
+{{- if .CanWrite}}
+<form class="note-form" id="note-form" method="post" action="/notes">
+  <h2>Add a note</h2>
+  <p class="hint" id="selection">Select text in the source, then write the note.</p>
+  <input type="hidden" name="csrf" value="{{$.Viewer.CSRF}}">
+  <input type="hidden" name="sha" value="{{.Commit.SHA}}">
+  <input type="hidden" name="file" value="{{.File}}">
+  <input type="hidden" name="line" id="f-line">
+  <input type="hidden" name="col" id="f-col">
+  <input type="hidden" name="selected" id="f-selected">
+  <textarea name="body" rows="6" maxlength="{{.MaxChars}}" required></textarea>
+  <button type="submit" id="note-submit" disabled>Save note</button>
+</form>
+<script src="/static/source.js"></script>
+{{- end}}
+</div>
+{{- end}}
+{{end}}{{end}}

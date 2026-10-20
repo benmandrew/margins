@@ -227,3 +227,9 @@ func (s *Store) IntegrityCheck(ctx context.Context) (string, error) {
 	err := s.db.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&res)
 	return res, err
 }
+
+// Ping checks the database answers a query, for the health check.
+func (s *Store) Ping(ctx context.Context) error {
+	var one int
+	return s.db.QueryRowContext(ctx, "SELECT 1").Scan(&one)
+}

@@ -1,0 +1,44 @@
+{{define "content"}}{{with .Data}}
+<h1>Compare</h1>
+<form class="inline" method="get" action="/compare">
+  <label>From <input name="a" list="choices" value="{{.AName}}" required></label>
+  <label>To <input name="b" list="choices" value="{{.BName}}" required></label>
+  {{- if gt (len .Entries) 1}}
+  <label>Document <select name="entry">
+  {{- range .Entries}}<option value="{{entryName .}}"{{if eq . $.Data.Entry}} selected{{end}}>{{entryName .}}</option>{{end}}
+  </select></label>
+  {{- end}}
+  <button type="submit">Compare</button>
+  <datalist id="choices">{{range .Choices}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</datalist>
+</form>
+{{- if .A}}
+<p class="meta"><a class="sha" href="/c/{{.A}}">{{short .A}}</a> → <a class="sha" href="/c/{{.B}}">{{short .B}}</a>{{if .Method}} · method: {{.Method}}{{end}}</p>
+{{- if not .Diff}}
+<form method="post" action="/diff">
+  <input type="hidden" name="csrf" value="{{$.Viewer.CSRF}}">
+  <input type="hidden" name="a" value="{{.A}}">
+  <input type="hidden" name="b" value="{{.B}}">
+  <input type="hidden" name="entry" value="{{.EntryName}}">
+  <button type="submit">Build the diff</button>
+</form>
+{{- else if .Pending}}
+<p>The diff is being built. This page reloads until it is ready.</p>
+{{- else if .Log}}
+<p>The diff failed. No method succeeded.</p>
+<pre class="log">{{.Log}}</pre>
+{{- else}}
+{{- if .PDFURL}}
+<p class="actions"><a href="{{.PDFURL}}">Open the diff PDF</a> · <a href="{{.PDFURL}}?download">Download</a></p>
+<iframe class="pdf" src="{{.PDFURL}}" title="Diff PDF"></iframe>
+{{- end}}
+{{- if .Text}}
+<h2>Text diff</h2>
+<pre class="textdiff">{{range .Text}}<span class="{{.Class}}">{{.Text}}</span>
+{{end}}</pre>
+{{- if .TextCut}}<p>The text diff is cut short.</p>{{end}}
+{{- else}}
+<p>The text of the two PDFs is the same.</p>
+{{- end}}
+{{- end}}
+{{- end}}
+{{end}}{{end}}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{- if .Refresh}}
+<meta http-equiv="refresh" content="{{.Refresh}}">
+{{- end}}
+<title>{{.Title}} · Thesis review</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">Thesis review</a>
+  {{- if .Viewer.ID}}
+  <nav>
+    <a href="/">Timeline</a>
+    <a href="/compare">Compare</a>
+    <a href="/notes">Notes</a>
+    <a href="/latest.pdf">Latest PDF</a>
+  </nav>
+  <form class="logout" method="post" action="/logout">
+    <input type="hidden" name="csrf" value="{{.Viewer.CSRF}}">
+    <span>{{.Viewer.Name}}</span>
+    <button type="submit">Log out</button>
+  </form>
+  {{- end}}
+</header>
+<main>
+{{template "content" .}}
+</main>
+</body>
+</html>

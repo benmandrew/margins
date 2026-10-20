@@ -1,0 +1,38 @@
+{{define "content"}}{{with .Data}}
+<h1>Timeline</h1>
+{{- if gt (len .Branches) 1}}
+<form class="inline" method="get" action="/">
+  <label>Branch <select name="branch">
+  {{- range .Branches}}
+    <option value="{{.}}"{{if eq . $.Data.Branch}} selected{{end}}>{{.}}</option>
+  {{- end}}
+  </select></label>
+  <button type="submit">Show</button>
+</form>
+{{- end}}
+{{- if .Missing}}
+<p>The branch {{.Branch}} has not been fetched yet.</p>
+{{- else}}
+<table class="timeline">
+<thead><tr><th>Commit</th><th>Message</th><th>Author</th><th>Date</th><th>Build</th><th>Notes</th><th>Links</th></tr></thead>
+<tbody>
+{{- range .Rows}}
+<tr>
+  <td><a class="sha" href="/c/{{.Commit.SHA}}">{{short .Commit.SHA}}</a>{{range .Tags}} <span class="tag">{{.}}</span>{{end}}</td>
+  <td>{{.Commit.Subject}}</td>
+  <td>{{.Commit.Author}}</td>
+  <td class="date">{{date .Commit.CommittedAt}}</td>
+  <td>{{range .Builds}}<span class="status {{.Status}}" title="{{.Entry}}">{{.Status}}</span> {{end}}</td>
+  <td>{{if .Notes}}{{.Notes}}{{end}}</td>
+  <td class="links">
+    <a href="/c/{{.Commit.SHA}}.pdf">PDF</a>
+    {{- if .Notes}} <a href="/c/{{.Commit.SHA}}.notes.pdf">with notes</a>{{end}}
+    {{- if .Parent}} <a href="/compare?a={{.Parent}}&amp;b={{.Commit.SHA}}">diff vs parent</a>{{end}}
+    <a href="/source/{{.Commit.SHA}}">source</a>
+  </td>
+</tr>
+{{- end}}
+</tbody>
+</table>
+{{- end}}
+{{end}}{{end}}

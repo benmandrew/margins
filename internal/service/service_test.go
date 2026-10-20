@@ -293,7 +293,7 @@ func TestNotesAnnotatedAndCarried(t *testing.T) {
 	table := add(11, 31, "Output", "Is this value right?")
 	raw := add(16, 1, "print", "Raw block note.")
 
-	a, ok, err := f.RequestAnnotated(ctx, c1, "main.typ")
+	a, ok, err := f.RequestAnnotated(ctx, c1, "main.typ", true)
 	if err != nil || !ok {
 		t.Fatalf("RequestAnnotated: %v, %v", ok, err)
 	}
