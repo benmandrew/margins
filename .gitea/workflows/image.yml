@@ -1,0 +1,77 @@
+# Tests the service, builds its image for amd64 and arm64, and pushes both to
+# Docker Hub under one multi-arch tag.
+#
+# The image is Nix's own (packages.<system>.image, a streamLayeredImage), not
+# a Dockerfile: job containers on this runner have no Docker socket, but they
+# reach the host nix-daemon through the mounted /nix. skopeo pushes each
+# archive and crane joins the two into one index, and neither needs a daemon.
+#
+# The production host is arm64. Building its image needs the runner host's
+# nix-daemon to accept aarch64-linux builds (extra-platforms, with qemu-user
+# binfmt registered). Most of its closure substitutes from
+# cache.nixos.org, so only thesis, typdiff and the trimmed diff-pdf build.
+#
+# Two repository secrets are required, as for the other images:
+#   DOCKERHUB_USERNAME  the Docker Hub account
+#   DOCKERHUB_TOKEN     a Docker Hub access token with Read & Write scope
+
+name: image
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: docker.io/benmandrew/margins
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    container:
+      image: runner-images-patched:ubuntu-latest
+      volumes:
+        - /nix:/nix
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Put the host's Nix on PATH
+        run: echo "/nix/var/nix/profiles/default/bin" >>"$GITHUB_PATH"
+
+      - name: Test
+        run: nix build --print-build-logs .#checks.x86_64-linux.tests
+
+      - name: Build the amd64 image
+        run: nix build --print-build-logs .#packages.x86_64-linux.image -o image-amd64
+
+      - name: Build the arm64 image
+        run: nix build --print-build-logs .#packages.aarch64-linux.image -o image-arm64
+
+      - name: Push both and tag the index
+        if: github.ref == 'refs/heads/main'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          short="sha-${GITHUB_SHA::7}"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          # Tools from the flake's own nixpkgs pin, not the registry's.
+          tools="nix shell --inputs-from . nixpkgs#skopeo nixpkgs#crane --command"
+          $tools crane auth login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin <<<"$DOCKERHUB_TOKEN"
+          for arch in amd64 arm64; do
+            # skopeo reads a docker-archive by seeking, so it needs a file.
+            ./image-$arch >"$tmp/$arch.tar"
+            $tools skopeo copy --dest-creds "$DOCKERHUB_USERNAME:$DOCKERHUB_TOKEN" \
+              "docker-archive:$tmp/$arch.tar" "docker://$IMAGE:$short-$arch"
+            rm "$tmp/$arch.tar"
+          done
+          $tools crane index append \
+            -m "$IMAGE:$short-amd64" -m "$IMAGE:$short-arm64" -t "$IMAGE:$short"
+          $tools crane tag "$IMAGE:$short" latest

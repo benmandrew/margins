@@ -221,6 +221,11 @@ func run(ctx context.Context, timeout time.Duration, maxOutput int64, out, home,
 	// No SOURCE_DATE_EPOCH or anything else from the service's own
 	// environment: --creation-timestamp is the only date source.
 	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "LC_ALL=C.UTF-8", "NO_COLOR=1"}
+	// The image has no system trust store; Typst's package downloads need
+	// the bundle it points at.
+	if f := os.Getenv("SSL_CERT_FILE"); f != "" {
+		cmd.Env = append(cmd.Env, "SSL_CERT_FILE="+f)
+	}
 	cmd.WaitDelay = 5 * time.Second
 	var log limitedBuffer
 	log.max = maxLog

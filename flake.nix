@@ -31,12 +31,22 @@
             meta.mainProgram = "typdiff";
           };
 
+          # diff-pdf only draws into an off-screen buffer, so its wxWidgets
+          # needs no web view or OpenGL. The stock build pulls in WebKitGTK and
+          # GStreamer, which made the image 1.05 GB.
+          diff-pdf = pkgs.diff-pdf.override {
+            wxwidgets_3_2 = pkgs.wxwidgets_3_2.override {
+              withWebKit = false;
+              withMesa = false;
+            };
+          };
+
           # External programs the service shells out to at run time. Typst is
           # absent on purpose: the service downloads the exact version each
           # commit pins (see .typst-review.toml in the brief).
           runtimeDeps = [
             pkgs.git
-            pkgs.diff-pdf
+            diff-pdf
             pkgs.poppler-utils
             typdiff
           ];
@@ -68,25 +78,95 @@
             })
             typstReleaseHashes);
 
-          thesis = pkgs.buildGoModule {
+          goArgs = {
             pname = "thesis";
             version = "0.1.0";
             src = lib.cleanSource ./.;
-            vendorHash = lib.fakeHash;
-            subPackages = [ "cmd/thesis" ];
+            vendorHash = "sha256-z1h2erfw2wZ9y0QRVg/HL+W4956pAFIz6ROSQPGGC1Y=";
             env.CGO_ENABLED = "0";
+          };
+
+          thesis = pkgs.buildGoModule (goArgs // {
+            subPackages = [ "cmd/thesis" ];
             ldflags = [ "-s" "-w" ];
-            # The tests need git, typst and the diff tools, and the release
-            # archives above; `nix flake check` runs them through checks.
+            # The tests need git, the diff tools and the Typst archives;
+            # checks.tests runs them.
             doCheck = false;
             meta.mainProgram = "thesis";
+          });
+
+          # Every package's tests, with the tools on PATH and the Typst
+          # archives served locally, as in the dev shell.
+          tests = pkgs.buildGoModule (goArgs // {
+            pname = "thesis-tests";
+            nativeCheckInputs = runtimeDeps ++ [ pkgs.bash ];
+            THESIS_TEST_TYPST_RELEASES = typstReleases;
+            THESIS_TEST_TYPST_TARGET = typstTarget;
+            preCheck = ''
+              export HOME=$TMPDIR
+              patchShebangs scripts
+            '';
+            installPhase = "touch $out";
+          });
+
+          # The container's runtime. git is the minimal build: HTTPS fetches
+          # and worktrees, without Perl, Python or the GUI tools.
+          imageRuntime = [
+            pkgs.gitMinimal
+            diff-pdf
+            pkgs.poppler-utils
+            typdiff
+          ];
+
+          # Only what /etc must hold: the 99:100 user the container runs as,
+          # so git and GTK can look up a home directory.
+          imageEtc = pkgs.runCommand "thesis-etc" { } ''
+            mkdir -p $out/etc
+            printf 'root:x:0:0:root:/var/empty:/noshell\nthesis:x:99:100:thesis:/tmp:/noshell\n' >$out/etc/passwd
+            printf 'root:x:0:\nusers:x:100:\n' >$out/etc/group
+          '';
+
+          # FROM-scratch image: the Nix closure of the binary and its tools,
+          # nothing else. No shell, no package manager. Load it with
+          # `nix build .#image && ./result | docker load`.
+          image = pkgs.dockerTools.streamLayeredImage {
+            name = "benmandrew/thesis";
+            tag = "latest";
+            contents = [
+              (pkgs.buildEnv {
+                name = "thesis-root";
+                paths = [ thesis ] ++ imageRuntime;
+                pathsToLink = [ "/bin" ];
+              })
+              imageEtc
+            ];
+            # Mount points for the read-only root, which Docker would
+            # otherwise have to create.
+            extraCommands = ''
+              mkdir -p data etc/thesis
+              mkdir -m 1777 tmp
+            '';
+            config = {
+              Entrypoint = [ "/bin/thesis" ];
+              Cmd = [ "serve" ];
+              User = "99:100";
+              WorkingDir = "/data";
+              Env = [
+                "PATH=/bin"
+                "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                "THESIS_CONFIG=/etc/thesis/config.toml"
+              ];
+              Volumes."/data" = { };
+            };
           };
         in
         {
           packages = {
             default = thesis;
-            inherit thesis typdiff typstReleases;
+            inherit thesis typdiff typstReleases image;
           };
+
+          checks = { inherit tests; };
 
           devShells.default = pkgs.mkShell {
             packages = runtimeDeps ++ [

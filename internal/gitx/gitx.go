@@ -40,6 +40,9 @@ func (m *Mirror) env() []string {
 		"GIT_ASKPASS=",
 		"LC_ALL=C",
 	}
+	if f := os.Getenv("SSL_CERT_FILE"); f != "" {
+		env = append(env, "SSL_CERT_FILE="+f, "GIT_SSL_CAINFO="+f)
+	}
 	if m.Token != "" {
 		// Passed through the environment so it never shows in a process
 		// listing or in the repository's config file.
