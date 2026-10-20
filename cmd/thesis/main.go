@@ -3,7 +3,7 @@
 //	thesis serve        run the server (the default)
 //	thesis healthcheck  exit 0 when the local server answers /healthz
 //
-// The config file is THESIS_CONFIG, or /data/config.toml.
+// The config file is THESIS_CONFIG, or /etc/thesis/config.toml.
 package main
 
 import (
@@ -52,7 +52,7 @@ func configPath() string {
 	if p := os.Getenv("THESIS_CONFIG"); p != "" {
 		return p
 	}
-	return "/data/config.toml"
+	return "/etc/thesis/config.toml"
 }
 
 func serve() error {
