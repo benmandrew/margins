@@ -118,14 +118,6 @@
             typdiff
           ];
 
-          # Only what /etc must hold: the 99:100 user the container runs as,
-          # so git and GTK can look up a home directory.
-          imageEtc = pkgs.runCommand "thesis-etc" { } ''
-            mkdir -p $out/etc
-            printf 'root:x:0:0:root:/var/empty:/noshell\nthesis:x:99:100:thesis:/tmp:/noshell\n' >$out/etc/passwd
-            printf 'root:x:0:\nusers:x:100:\n' >$out/etc/group
-          '';
-
           # FROM-scratch image: the Nix closure of the binary and its tools,
           # nothing else. No shell, no package manager. Load it with
           # `nix build .#image && ./result | docker load`.
@@ -138,13 +130,18 @@
                 paths = [ thesis ] ++ imageRuntime;
                 pathsToLink = [ "/bin" ];
               })
-              imageEtc
             ];
             # Mount points for the read-only root, which Docker would
-            # otherwise have to create.
+            # otherwise have to create, and the only users /etc must hold:
+            # the 99:100 user the container runs as, so git and GTK can look
+            # up a home directory. passwd and group are plain files, since a
+            # symlink into /nix/store counts as escaping the root when Docker
+            # resolves the user for an exec, and the healthcheck then fails.
             extraCommands = ''
               mkdir -p data etc/thesis
               mkdir -m 1777 tmp
+              printf 'root:x:0:0:root:/var/empty:/noshell\nthesis:x:99:100:thesis:/tmp:/noshell\n' >etc/passwd
+              printf 'root:x:0:\nusers:x:100:\n' >etc/group
             '';
             config = {
               Entrypoint = [ "/bin/thesis" ];
