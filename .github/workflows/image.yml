@@ -1,0 +1,85 @@
+# Tests the service and builds its image on native amd64 and arm64 runners,
+# then pushes both to Docker Hub under one multi-arch tag.
+#
+# The image is Nix's own (packages.<system>.image, a streamLayeredImage), not
+# a Dockerfile. skopeo pushes each archive and crane joins the two into one
+# index, and neither needs a Docker daemon.
+#
+# Two repository secrets are required:
+#   DOCKERHUB_USERNAME  the Docker Hub account
+#   DOCKERHUB_TOKEN     a Docker Hub access token with Read & Write scope
+
+name: image
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: docker.io/benmandrew/margins
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            system: x86_64-linux
+            runner: ubuntu-24.04
+          - arch: arm64
+            system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Test
+        run: nix build --print-build-logs .#checks.${{ matrix.system }}.tests
+
+      - name: Build the image
+        run: nix build --print-build-logs .#packages.${{ matrix.system }}.image -o image
+
+      - name: Push the image
+        if: github.ref == 'refs/heads/main'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # skopeo reads a docker-archive by seeking, so it needs a file.
+          ./image >"$RUNNER_TEMP/image.tar"
+          # Tools from the flake's own nixpkgs pin, not the registry's.
+          nix shell --inputs-from . nixpkgs#skopeo --command \
+            skopeo copy --dest-creds "$DOCKERHUB_USERNAME:$DOCKERHUB_TOKEN" \
+            "docker-archive:$RUNNER_TEMP/image.tar" \
+            "docker://$IMAGE:sha-${GITHUB_SHA::7}-${{ matrix.arch }}"
+
+  manifest:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Join both images and tag latest
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          short="sha-${GITHUB_SHA::7}"
+          crane="nix shell --inputs-from . nixpkgs#crane --command crane"
+          $crane auth login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin <<<"$DOCKERHUB_TOKEN"
+          $crane index append \
+            -m "$IMAGE:$short-amd64" -m "$IMAGE:$short-arm64" -t "$IMAGE:$short"
+          $crane tag "$IMAGE:$short" latest

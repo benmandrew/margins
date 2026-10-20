@@ -229,7 +229,7 @@ The service ships as one container image. A separate deployment repository runs 
 
 **Gitea access.** A Gitea instance with `REQUIRE_SIGNIN_VIEW=true` answers an anonymous clone with `403`, so the service clones and fetches with a `read:repository` token. Gitea's `[webhook] ALLOWED_HOST_LIST` defaults to `external`, which refuses a delivery to a private address. The deployment has to allow the service's private address explicitly.
 
-**Image.** The flake builds the image for each architecture (`packages.<system>.image`). The repository's Gitea Actions workflow pushes both and joins them into one multi-arch tag, `benmandrew/margins:sha-<short>`, and tags it `latest`. An amd64-only image fails on an arm64 host with `no matching manifest for linux/arm64/v8`.
+**Image.** The flake builds the image for each architecture (`packages.<system>.image`). The repository's GitHub Actions workflow builds each on a native runner, pushes both and joins them into one multi-arch tag, `benmandrew/margins:sha-<short>`, and tags it `latest`. An amd64-only image fails on an arm64 host with `no matching manifest for linux/arm64/v8`.
 
 **Image contents:** the app, `git`, `diff-pdf`, `poppler-utils` (for `pdftotext`), `typdiff` (pinned version), and a fonts fallback, all for both architectures. Typst binaries are fetched at runtime into the volume, not baked in; the service picks the `aarch64-unknown-linux-musl` or `x86_64-unknown-linux-musl` release for the host, and the config pins a SHA-256 for each.
 

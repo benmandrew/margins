@@ -16,4 +16,4 @@ A Go service that builds a PDF for every commit of one Typst thesis repository o
 ## Commands
 
 - Tests: `nix develop -c go test ./...`, or `nix build .#checks.x86_64-linux.tests` for the sandboxed run CI uses.
-- Image: `nix build .#image && ./result | docker load`. CI builds it per architecture and pushes with `.gitea/workflows/image.yml`.
+- Image: `nix build .#image && ./result | docker load`. CI builds it per architecture and pushes with `.github/workflows/image.yml`.
