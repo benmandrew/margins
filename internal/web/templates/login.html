@@ -1,7 +1,11 @@
-{{define "content"}}
+{{define "content"}}{{with .Data}}
 <h1>Log in</h1>
-<p>Log in with the passkey you set up for this site. On a computer without one, choose your phone when the browser asks.</p>
-<button id="login" type="button">Log in with a passkey</button>
-<p id="status" class="status" role="status"></p>
+<p>Enter the secret from the login link you were sent, or open the link itself.</p>
+<form id="login" method="post" action="/login">
+<input type="hidden" name="next" value="{{.Next}}">
+<p><label>Secret <input type="password" name="secret" autocomplete="current-password" required autofocus></label></p>
+<button type="submit">Log in</button>
+</form>
+{{with .Error}}<p class="error" role="alert">{{.}}</p>{{end}}
 <script src="/static/auth.js"></script>
-{{end}}
+{{end}}{{end}}

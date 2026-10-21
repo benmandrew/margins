@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-webauthn/webauthn/webauthn"
-
 	"git.benmandrew.com/me/margins/internal/config"
 	"git.benmandrew.com/me/margins/internal/service"
 	"git.benmandrew.com/me/margins/internal/store"
@@ -35,10 +33,8 @@ type Server struct {
 	Log     *slog.Logger
 	Webhook *webhook.Handler
 
-	wa         *webauthn.WebAuthn
-	ceremonies ceremonies
-	limiter    limiter
-	pages      map[string]*template.Template
+	limiter limiter
+	pages   map[string]*template.Template
 	// secure marks cookies Secure. It is false only for a plain-HTTP
 	// localhost origin in development.
 	secure bool
@@ -53,9 +49,6 @@ func New(svc *service.Service, secrets config.Secrets) (*Server, error) {
 	}
 	s.secure = strings.HasPrefix(s.Cfg.Origin, "https://")
 	var err error
-	if s.wa, err = newWebAuthn(s.Cfg); err != nil {
-		return nil, err
-	}
 	if s.pages, err = parseTemplates(); err != nil {
 		return nil, err
 	}
@@ -85,11 +78,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", staticHandler(http.FileServerFS(static))))
 
 	mux.HandleFunc("GET /login", s.loginPage)
-	mux.HandleFunc("POST /login/begin", s.requireOrigin(s.loginBegin))
-	mux.HandleFunc("POST /login/finish", s.requireOrigin(s.loginFinish))
-	mux.HandleFunc("GET /enrol/{id}", s.enrolPage)
-	mux.HandleFunc("POST /enrol/{id}/begin", s.requireOrigin(s.enrolBegin))
-	mux.HandleFunc("POST /enrol/{id}/finish", s.requireOrigin(s.enrolFinish))
+	mux.HandleFunc("POST /login", s.requireOrigin(s.login))
 	mux.HandleFunc("POST /logout", auth(s.logout))
 
 	mux.HandleFunc("GET /{$}", auth(s.timeline))
@@ -256,24 +245,6 @@ type requestForm struct {
 	Action string
 	Fields map[string]string
 	Label  string
-}
-
-func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.session(r); ok {
-		w.Header().Set("Cache-Control", "no-store")
-		http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusFound)
-		return
-	}
-	s.render(w, r, http.StatusOK, "login", "Log in", nil)
-}
-
-func (s *Server) enrolPage(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.Cfg.User(r.PathValue("id"))
-	if !ok {
-		s.render(w, r, http.StatusNotFound, "message", "Not found", message{Heading: "Not found", Text: "This enrolment link is not valid."})
-		return
-	}
-	s.render(w, r, http.StatusOK, "enrol", "Set up your passkey", struct{ ID, Name string }{u.ID, u.Name})
 }
 
 // sameSiteRequest reports whether a GET that starts work came from this site

@@ -65,9 +65,9 @@ type User struct {
 	ID   string `toml:"id"`
 	Name string `toml:"name"`
 	Role Role   `toml:"role"`
-	// EnrolHash is the hex SHA-256 of the user's one-time enrolment secret.
-	// The secret itself never reaches the container.
-	EnrolHash string `toml:"enrol_hash"`
+	// SecretHash is the hex SHA-256 of the user's login secret. The secret
+	// itself never reaches the container.
+	SecretHash string `toml:"secret_hash"`
 }
 
 // Config is the service configuration. Secrets are absent on purpose: they
@@ -76,8 +76,7 @@ type User struct {
 type Config struct {
 	Listen  string `toml:"listen"`
 	DataDir string `toml:"data_dir"`
-	// Origin is the public origin. The WebAuthn relying-party ID is its host,
-	// and every POST must carry exactly this Origin.
+	// Origin is the public origin. Every POST must carry exactly this Origin.
 	Origin string `toml:"origin"`
 	// ClientIPHeader names the header nginx sets to the client address.
 	ClientIPHeader string `toml:"client_ip_header"`
@@ -207,6 +206,7 @@ func (c Config) validate() error {
 		errs = append(errs, fmt.Errorf("timers.snapshot_at %q is not HH:MM", c.Timers.SnapshotAt))
 	}
 	seen := map[string]bool{}
+	seenHash := map[string]bool{}
 	for _, u := range c.Users {
 		if !UserID.MatchString(u.ID) {
 			errs = append(errs, fmt.Errorf("user id %q does not match %s", u.ID, UserID))
@@ -218,9 +218,15 @@ func (c Config) validate() error {
 		if u.Role != RoleAuthor && u.Role != RoleSupervisor {
 			errs = append(errs, fmt.Errorf("user %q: role %q is not author or supervisor", u.ID, u.Role))
 		}
-		if !sha256Hex.MatchString(u.EnrolHash) {
-			errs = append(errs, fmt.Errorf("user %q: enrol_hash is not a SHA-256 in hex", u.ID))
+		if !sha256Hex.MatchString(u.SecretHash) {
+			errs = append(errs, fmt.Errorf("user %q: secret_hash is not a SHA-256 in hex", u.ID))
 		}
+		// The secret alone identifies the user at login, so two users cannot
+		// share one.
+		if seenHash[u.SecretHash] {
+			errs = append(errs, fmt.Errorf("user %q: secret_hash is another user's", u.ID))
+		}
+		seenHash[u.SecretHash] = true
 		if u.Name == "" {
 			errs = append(errs, fmt.Errorf("user %q: name is empty", u.ID))
 		}

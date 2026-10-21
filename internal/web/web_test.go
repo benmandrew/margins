@@ -2,14 +2,8 @@ package web
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,8 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fxamacker/cbor/v2"
-
 	"git.benmandrew.com/me/margins/internal/config"
 	"git.benmandrew.com/me/margins/internal/service"
 	"git.benmandrew.com/me/margins/internal/store"
@@ -40,6 +32,7 @@ var secrets = map[string]string{"ben": "ben-secret", "alice": "alice-secret", "b
 
 type fixture struct {
 	svc  *service.Service
+	web  *Server
 	srv  *httptest.Server
 	repo string
 	shas []string
@@ -76,7 +69,7 @@ func newFixture(t *testing.T) *fixture {
 		id, name string
 		role     config.Role
 	}{{"ben", "Ben", config.RoleAuthor}, {"alice", "Alice", config.RoleSupervisor}, {"bob", "Bob", config.RoleSupervisor}} {
-		users = append(users, config.User{ID: u.id, Name: u.name, Role: u.role, EnrolHash: hashToken(secrets[u.id])})
+		users = append(users, config.User{ID: u.id, Name: u.name, Role: u.role, SecretHash: hashToken(secrets[u.id])})
 	}
 	data := t.TempDir()
 	cfg := config.Config{
@@ -117,7 +110,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	srv := httptest.NewTLSServer(s.Handler())
 	t.Cleanup(srv.Close)
-	f := &fixture{svc: svc, srv: srv, repo: repo}
+	f := &fixture{svc: svc, web: s, srv: srv, repo: repo}
 	out, err := exec.Command("git", "-C", repo, "rev-list", "--reverse", "main").Output()
 	if err != nil {
 		t.Fatal(err)
@@ -149,17 +142,13 @@ func (w testWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// --- A browser with a software passkey ---
+// --- A browser ---
 
 type browser struct {
-	t      *testing.T
-	f      *fixture
-	c      *http.Client
-	key    *ecdsa.PrivateKey
-	credID []byte
-	userID string
-	count  uint32
-	ip     string
+	t  *testing.T
+	f  *fixture
+	c  *http.Client
+	ip string
 }
 
 func (f *fixture) browser(t *testing.T) *browser {
@@ -168,11 +157,7 @@ func (f *fixture) browser(t *testing.T) *browser {
 	c := &shared
 	c.Jar = jar
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &browser{t: t, f: f, c: c, key: key, ip: "192.0.2.1"}
+	return &browser{t: t, f: f, c: c, ip: "192.0.2.1"}
 }
 
 func (b *browser) do(method, path string, body io.Reader, hdr map[string]string) *http.Response {
@@ -200,16 +185,6 @@ func (b *browser) get(path string) (*http.Response, string) {
 	return res, string(data)
 }
 
-func (b *browser) postJSON(path string, v any) (*http.Response, map[string]any) {
-	b.t.Helper()
-	data, _ := json.Marshal(v)
-	res := b.do("POST", path, strings.NewReader(string(data)), map[string]string{"Origin": origin, "Content-Type": "application/json"})
-	defer res.Body.Close()
-	var out map[string]any
-	json.NewDecoder(res.Body).Decode(&out)
-	return res, out
-}
-
 var csrfRe = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
 
 // postForm sends a form with the session's CSRF token, read from a page.
@@ -226,94 +201,20 @@ func (b *browser) postForm(path string, form url.Values) *http.Response {
 	return res
 }
 
-func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
-
-func unb64(t *testing.T, s string) []byte {
-	b, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return b
-}
-
-func (b *browser) clientData(typ, challenge string) []byte {
-	data, _ := json.Marshal(map[string]any{"type": typ, "challenge": challenge, "origin": origin, "crossOrigin": false})
-	return data
-}
-
-func (b *browser) authData(flags byte, attested []byte) []byte {
-	rp := sha256.Sum256([]byte("thesis.example"))
-	out := append([]byte{}, rp[:]...)
-	out = append(out, flags)
-	b.count++
-	out = binary.BigEndian.AppendUint32(out, b.count)
-	return append(out, attested...)
-}
-
-// enrol runs the enrolment ceremony and returns the finish response.
-func (b *browser) enrol(id, secret string) *http.Response {
+// login submits the login form, as the page or a login link does.
+func (b *browser) login(secret, next string) *http.Response {
 	b.t.Helper()
-	res, opts := b.postJSON("/enrol/"+id+"/begin", map[string]string{"secret": secret})
-	if res.StatusCode != http.StatusOK {
-		return res
-	}
-	pk := opts["publicKey"].(map[string]any)
-	b.credID = make([]byte, 16)
-	rand.Read(b.credID)
-	b.userID = id
-	x, y := b.key.PublicKey.X.FillBytes(make([]byte, 32)), b.key.PublicKey.Y.FillBytes(make([]byte, 32))
-	cose, err := cbor.Marshal(map[int]any{1: 2, 3: -7, -1: 1, -2: x, -3: y})
-	if err != nil {
-		b.t.Fatal(err)
-	}
-	attested := make([]byte, 16) // AAGUID
-	attested = binary.BigEndian.AppendUint16(attested, uint16(len(b.credID)))
-	attested = append(attested, b.credID...)
-	attested = append(attested, cose...)
-	att, err := cbor.Marshal(map[string]any{"fmt": "none", "attStmt": map[string]any{}, "authData": b.authData(0x45, attested)})
-	if err != nil {
-		b.t.Fatal(err)
-	}
-	res, _ = b.postJSON("/enrol/"+id+"/finish", map[string]any{
-		"id": b64(b.credID), "rawId": b64(b.credID), "type": "public-key",
-		"response": map[string]any{
-			"clientDataJSON":    b64(b.clientData("webauthn.create", pk["challenge"].(string))),
-			"attestationObject": b64(att),
-		},
-	})
-	return res
-}
-
-func (b *browser) login() *http.Response {
-	b.t.Helper()
-	res, opts := b.postJSON("/login/begin", map[string]any{})
-	if res.StatusCode != http.StatusOK {
-		b.t.Fatalf("login begin: %s", res.Status)
-	}
-	pk := opts["publicKey"].(map[string]any)
-	cd := b.clientData("webauthn.get", pk["challenge"].(string))
-	ad := b.authData(0x05, nil)
-	h := sha256.Sum256(cd)
-	digest := sha256.Sum256(append(append([]byte{}, ad...), h[:]...))
-	sig, err := ecdsa.SignASN1(rand.Reader, b.key, digest[:])
-	if err != nil {
-		b.t.Fatal(err)
-	}
-	res, _ = b.postJSON("/login/finish", map[string]any{
-		"id": b64(b.credID), "rawId": b64(b.credID), "type": "public-key",
-		"response": map[string]any{
-			"clientDataJSON": b64(cd), "authenticatorData": b64(ad),
-			"signature": b64(sig), "userHandle": b64([]byte(b.userID)),
-		},
-	})
+	form := url.Values{"secret": {secret}, "next": {next}}
+	res := b.do("POST", "/login", strings.NewReader(form.Encode()), map[string]string{"Origin": origin, "Content-Type": "application/x-www-form-urlencoded"})
+	res.Body.Close()
 	return res
 }
 
 func (f *fixture) loggedIn(t *testing.T, id string) *browser {
 	t.Helper()
 	b := f.browser(t)
-	if res := b.enrol(id, secrets[id]); res.StatusCode != http.StatusOK {
-		t.Fatalf("enrol %s: %s", id, res.Status)
+	if res := b.login(secrets[id], "/"); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("login %s: %s", id, res.Status)
 	}
 	return b
 }
@@ -340,54 +241,66 @@ func TestAuth(t *testing.T) {
 	if res := anon.do("POST", "/notes", nil, map[string]string{"Origin": origin}); res.StatusCode != http.StatusUnauthorized {
 		t.Errorf("anonymous POST: %s", res.Status)
 	}
-	if res := anon.do("POST", "/login/begin", nil, map[string]string{"Origin": "https://evil.example"}); res.StatusCode != http.StatusForbidden {
-		t.Errorf("cross-origin login begin: %s", res.Status)
+	form := url.Values{"secret": {secrets["alice"]}}.Encode()
+	if res := anon.do("POST", "/login", strings.NewReader(form), map[string]string{"Origin": "https://evil.example", "Content-Type": "application/x-www-form-urlencoded"}); res.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-origin login: %s", res.Status)
 	}
 
-	// A wrong secret, an unknown user, then the real enrolment.
-	if res := anon.enrol("alice", "wrong"); res.StatusCode != http.StatusForbidden {
-		t.Errorf("wrong secret: %s", res.Status)
+	// A wrong or empty secret fails.
+	for _, secret := range []string{"wrong", ""} {
+		if res := anon.login(secret, "/"); res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("secret %q: %s", secret, res.Status)
+		}
 	}
-	if res := anon.enrol("nobody", "x"); res.StatusCode != http.StatusForbidden {
-		t.Errorf("unknown user: %s", res.Status)
+	if res, _ := anon.get("/"); res.StatusCode != http.StatusFound {
+		t.Errorf("timeline after a failed login: %s", res.Status)
 	}
+
+	// The secret alone names the user, and next is followed only on this site.
 	alice := f.browser(t)
-	if res := alice.enrol("alice", secrets["alice"]); res.StatusCode != http.StatusOK {
-		t.Fatalf("enrol: %s", res.Status)
+	res = alice.login(secrets["alice"], "/notes")
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/notes" {
+		t.Fatalf("login: %s to %q", res.Status, res.Header.Get("Location"))
 	}
-	if res, _ := alice.get("/"); res.StatusCode != http.StatusOK {
-		t.Errorf("timeline after enrolment: %s", res.Status)
-	}
-	if res := f.browser(t).enrol("alice", secrets["alice"]); res.StatusCode != http.StatusGone {
-		t.Errorf("second use of the enrolment link: %s", res.Status)
-	}
-
-	// The passkey logs in from a fresh browser.
-	again := f.browser(t)
-	again.key, again.credID, again.userID, again.count = alice.key, alice.credID, alice.userID, alice.count
-	if res := again.login(); res.StatusCode != http.StatusOK {
-		t.Fatalf("login: %s", res.Status)
-	}
-	res, body := again.get("/")
+	res, body := alice.get("/")
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Alice") {
 		t.Errorf("timeline after login: %s", res.Status)
 	}
-	// A login with an unregistered key fails.
-	stranger := f.browser(t)
-	stranger.credID, stranger.userID = []byte("not-a-credential"), "alice"
-	if res := stranger.login(); res.StatusCode != http.StatusUnauthorized {
-		t.Errorf("unregistered passkey: %s", res.Status)
+	if res := f.browser(t).login(secrets["bob"], "//evil.example"); res.Header.Get("Location") != "/" {
+		t.Errorf("offsite next: redirected to %q", res.Header.Get("Location"))
+	}
+	if res, _ := alice.get("/login"); res.StatusCode != http.StatusFound {
+		t.Errorf("login page when logged in: %s", res.Status)
 	}
 
 	// A POST without the CSRF token, then logout.
-	if res := again.do("POST", "/notes", strings.NewReader("sha=x"), map[string]string{"Origin": origin, "Content-Type": "application/x-www-form-urlencoded"}); res.StatusCode != http.StatusForbidden {
+	if res := alice.do("POST", "/notes", strings.NewReader("sha=x"), map[string]string{"Origin": origin, "Content-Type": "application/x-www-form-urlencoded"}); res.StatusCode != http.StatusForbidden {
 		t.Errorf("POST without CSRF: %s", res.Status)
 	}
-	if res := again.postForm("/logout", url.Values{}); res.StatusCode != http.StatusSeeOther {
+	if res := alice.postForm("/logout", url.Values{}); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("logout: %s", res.Status)
 	}
-	if res, _ := again.get("/"); res.StatusCode != http.StatusFound {
+	if res, _ := alice.get("/"); res.StatusCode != http.StatusFound {
 		t.Errorf("after logout: %s", res.Status)
+	}
+}
+
+func TestNewSecretEndsSessions(t *testing.T) {
+	f := newFixture(t)
+	bob := f.loggedIn(t, "bob")
+	for i, u := range f.web.Cfg.Users {
+		if u.ID == "bob" {
+			f.web.Cfg.Users[i].SecretHash = hashToken("bob-new-secret")
+		}
+	}
+	if res, _ := bob.get("/"); res.StatusCode != http.StatusFound {
+		t.Errorf("session after a new secret: %s", res.Status)
+	}
+	if res := f.browser(t).login(secrets["bob"], "/"); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("old secret: %s", res.Status)
+	}
+	if res := f.browser(t).login("bob-new-secret", "/"); res.StatusCode != http.StatusSeeOther {
+		t.Errorf("new secret: %s", res.Status)
 	}
 }
 
@@ -396,15 +309,14 @@ func TestRateLimit(t *testing.T) {
 	b := f.browser(t)
 	var last *http.Response
 	for range 25 {
-		last = b.do("POST", "/login/begin", nil, map[string]string{"Origin": origin})
-		last.Body.Close()
+		last = b.login("wrong", "/")
 	}
 	if last.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("26th login begin: %s", last.Status)
+		t.Errorf("25th login: %s", last.Status)
 	}
 	// Another address is not limited.
 	b.ip = "192.0.2.2"
-	if res := b.do("POST", "/login/begin", nil, map[string]string{"Origin": origin}); res.StatusCode != http.StatusOK {
+	if res := b.login(secrets["ben"], "/"); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("other address: %s", res.Status)
 	}
 }

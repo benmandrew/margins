@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -66,18 +67,35 @@ func TestResetRunning(t *testing.T) {
 	}
 }
 
-func TestEnrolmentOnce(t *testing.T) {
-	s := open(t)
-	if err := s.CompleteEnrolment(ctx, "h", Credential{ID: []byte{1}, UserID: "ben", Data: "{}"}); err != nil {
+// A database from before secret logins keeps its data, and its passkey
+// sessions end.
+func TestMigrateFromPasskeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "db.sqlite")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	err := s.CompleteEnrolment(ctx, "h", Credential{ID: []byte{2}, UserID: "ben", Data: "{}"})
-	if !errors.Is(err, ErrEnrolmentUsed) {
-		t.Fatalf("second enrolment: %v", err)
+	for _, q := range []string{
+		migrations[0],
+		"PRAGMA user_version = 1",
+		"INSERT INTO sessions (hash, user_id, csrf, created_at, expires_at) VALUES ('old', 'ben', 'c', 0, 9999999999)",
+		"INSERT INTO deliveries (id, received_at) VALUES ('d1', 0)",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(q, err)
+		}
 	}
-	creds, _ := s.Credentials(ctx, "ben")
-	if len(creds) != 1 {
-		t.Errorf("credentials = %d, want 1", len(creds))
+	db.Close()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if seen, err := s.SeenDelivery("d1"); err != nil || !seen {
+		t.Errorf("delivery lost: %v, %v", seen, err)
+	}
+	if sess, err := s.GetSession(ctx, "old"); err != nil || sess.SecretHash != "" {
+		t.Errorf("old session = %+v, %v; want one with no secret hash", sess, err)
 	}
 }
 
@@ -88,7 +106,6 @@ func TestSessionsExpireAndUsersRemoved(t *testing.T) {
 		t.Error("expired session returned")
 	}
 	s.CreateSession(ctx, Session{Hash: "a", UserID: "alice", CSRF: "c", ExpiresAt: now() + 100})
-	s.AddCredential(ctx, Credential{ID: []byte{9}, UserID: "alice", Data: "{}"})
 	s.CreateSession(ctx, Session{Hash: "b", UserID: "ben", CSRF: "c", ExpiresAt: now() + 100})
 	if _, err := s.RemoveUsersExcept(ctx, []string{"ben"}); err != nil {
 		t.Fatal(err)
@@ -98,9 +115,6 @@ func TestSessionsExpireAndUsersRemoved(t *testing.T) {
 	}
 	if _, err := s.GetSession(ctx, "b"); err != nil {
 		t.Error("kept user's session removed")
-	}
-	if c, _ := s.Credentials(ctx, "alice"); len(c) != 0 {
-		t.Error("removed user's passkey survived")
 	}
 }
 

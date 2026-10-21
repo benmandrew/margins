@@ -5,8 +5,7 @@
 listen = ":8080"
 data_dir = "/data"
 
-# The public origin. The WebAuthn relying-party ID is its host, and every POST
-# must carry exactly this Origin.
+# The public origin. Every POST must carry exactly this Origin.
 origin = "https://thesis.benmandrew.com"
 
 # The header nginx sets to the real client address. nginx derives it from
@@ -54,14 +53,16 @@ snapshot_at = "01:30"
 "0.15.1/x86_64-unknown-linux-musl" = "a6d077d0a95eed5a2eba715b2dae06be954f624ccbf85758a03f389ded33118c"
 "0.15.1/aarch64-unknown-linux-musl" = "5aa8d74a3d906e60ea12a66ac2f37f8eef1b14cbad7182a745e393a10c23dcee"
 
+# Who can log in. secret_hash is the SHA-256, in hex, of the user's login
+# secret, and each user needs a different one: the secret alone names the user.
 [[users]]
 id = "ben"
 name = "Ben"
 role = "author"
-enrol_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+secret_hash = "0000000000000000000000000000000000000000000000000000000000000000"
 
 [[users]]
 id = "alice"
 name = "Alice"
 role = "supervisor"
-enrol_hash = "1111111111111111111111111111111111111111111111111111111111111111"
+secret_hash = "1111111111111111111111111111111111111111111111111111111111111111"

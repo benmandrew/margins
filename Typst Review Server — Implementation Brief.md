@@ -7,7 +7,7 @@ Oct 20, 2026 · @Ben
 Build a small self-hosted web app that turns every push to a Typst thesis repository into a PDF, and shows supervisors what changed between versions.
 
 - The author writes the thesis in Typst locally and pushes to one Git repository on the self-hosted Gitea (`git.benmandrew.com`).
-- Supervisors review the thesis and add notes. Some annotate the PDF. Others prefer margin notes placed in the source, as they would write with LaTeX's todonotes package on Overleaf. They should not need Git, a Typst install or a typst.app account. They log in to this service with a passkey and never set a password.
+- Supervisors review the thesis and add notes. Some annotate the PDF. Others prefer margin notes placed in the source, as they would write with LaTeX's todonotes package on Overleaf. They should not need Git, a Typst install or a typst.app account. They log in to this service with a personal secret, from a password manager or a bookmarked link.
 - typst.app can sync with Git only on its paid Pro plan, and the self-hosted collaborative Typst editors we looked at (Collabst, TOSS, typst-web, TINO) do not combine Git with review comments. So we keep plain Git as the source of truth and add a build-and-diff service beside it.
 - What supervisors need most is "what changed since I last read it", not a diff for every commit. Per-commit PDFs exist for history and for ad-hoc comparisons.
 
@@ -25,7 +25,7 @@ flowchart LR
   ui[Web UI, login required] -- notes --> store
   store --> ui
   ui -- annotated builds --> workers
-  supervisor[Supervisor] -- HTTPS, passkey --> cdn[CDN] --> proxy[reverse proxy] --> ui
+  supervisor[Supervisor] -- HTTPS, secret --> cdn[CDN] --> proxy[reverse proxy] --> ui
 ```
 
 The receiver only verifies and enqueues. All Git and Typst work happens in workers, so a slow build never times out Gitea's webhook delivery.
@@ -127,7 +127,7 @@ This depends on whether typdiff's output is self-contained per file (defines `di
 
 ## Access control
 
-Every route needs a login except `GET /healthz` and `POST /hooks/push`. The webhook checks its own HMAC, and the reverse proxy closes it to the public anyway. Logins use passkeys (WebAuthn), so the app stores no passwords and sends no email. The deployment runs no mail server or identity provider, so email login links would add an outside dependency.
+Every route needs a login except `GET /healthz` and `POST /hooks/push`. The webhook checks its own HMAC, and the reverse proxy closes it to the public anyway. Each user logs in with a personal secret, and the app stores only its hash and sends no email. The service has four users and guards thesis drafts, and the deployment runs no mail server or identity provider, so a per-user secret is enough.
 
 **Users** are listed in the service's config file:
 
@@ -136,30 +136,22 @@ Every route needs a login except `GET /healthz` and `POST /hooks/push`. The webh
 id = "ben"                    # ^[a-z][a-z0-9-]{0,31}$
 name = "Ben"
 role = "author"
-enrol_hash = "<sha256 of the enrolment secret>"
+secret_hash = "<sha256 of the login secret>"
 
 [[users]]
 id = "alice"
 name = "Alice"
 role = "supervisor"
-enrol_hash = "<sha256 of the enrolment secret>"
+secret_hash = "<sha256 of the login secret>"
 ```
 
 **Roles.** Every logged-in user can read everything, including every note. A supervisor can create notes, and can edit or delete their own notes while they are open. The author can also resolve any note.
 
-**Enrolment.** Each user has a one-time enrolment secret in the deployment's secret store. The deployment renders only its SHA-256 into the config, so the volume never holds the secret.
-
-1. The author sends the user the URL `/enrol/<id>#<secret>`. Browsers do not send the fragment, so the secret stays out of the proxy and CDN logs. The page's script posts it in the request body.
-2. The app checks the secret against `enrol_hash` in constant time, registers a passkey, and records the hash as used. A used hash is refused.
-3. To re-enrol a user who lost their device, change their enrolment secret and redeploy. The new hash has not been used, so the new URL works once. Re-enrolment adds a passkey and keeps the old ones.
-
-At boot, the app deletes the passkeys and sessions of any user who is no longer in the config.
-
-**Passkeys.** The relying-party ID is `thesis.benmandrew.com`. Require user verification and check the origin on every ceremony. Phones count as authenticators through the cross-device QR flow, so a supervisor with only a university desktop can still log in.
+**Login secrets.** Each user has a login secret in the deployment's secret store. The deployment renders only its hex SHA-256 into `secret_hash`, so the container never holds the secret. The secret alone identifies the user, so each user needs a different one, and config validation rejects two users with the same hash. `GET /login` shows a form with one password field. `POST /login` hashes the submitted secret and compares it in constant time with every user's hash. A match starts a session and redirects to `next`, but only within this site, and a wrong secret gets `401` and the form again. A *login link* of the form `https://thesis.benmandrew.com/login#<secret>` also works. Browsers do not send the fragment, so the secret stays out of the proxy and CDN logs. A static script fills the form from the fragment, removes it from the address bar and history, and submits. Each session records the hash of the secret it was made with. Changing a user's secret and redeploying therefore ends all of that user's sessions, and the old secret stops working. A user removed from the config loses their sessions at the next start, and any request on those sessions fails at once because the user no longer exists. A leaked secret works until it is rotated, and it can be phished, since nothing binds it to this origin. In return, logging in is one click from a password manager or a bookmarked link, on any device.
 
 **Sessions.** A session is a random 256-bit ID in a `__Host-session` cookie with `Secure`, `HttpOnly` and `SameSite=Lax`. The database stores only its hash. Sessions expire after 30 days, and logout deletes the row. Every `POST` must carry a CSRF token tied to the session and an `Origin` of `https://thesis.benmandrew.com`. A request without a valid session gets a `302` to `/login`, or `401` for a `POST`.
 
-**Rate limits** apply per client address and per user on enrolment, login and note writes. Take the client address from the header that the reverse proxy sets, never from a header the client can choose (see Security).
+**Rate limits** apply per client address on login, and per client address and per user on note writes. Take the client address from the header that the reverse proxy sets, never from a header the client can choose (see Security).
 
 ## Supervisor notes
 
@@ -196,7 +188,7 @@ The UI is a few plain server-rendered pages, all behind the login. Only the note
 
 **Pages**
 
-- **Login** and **Enrol:** the passkey ceremonies. Their script is a static file, so the Content Security Policy needs no inline script.
+- **Login:** a form with one password field. The script that fills it from a login link is a static file, so the Content Security Policy needs no inline script.
 - **Timeline** (`/`): commits on the tracked branch, newest first, with build status, author, message, review tags and the count of open notes. Each row links to its PDF, its annotated PDF and "diff vs parent".
 - **Compare:** pick any two commits or tags; shows the diff PDF, its method, and the text diff.
 - **Commit:** the PDF or the annotated PDF in the browser's own viewer, the build log on failure, and a download button.
@@ -250,7 +242,7 @@ The service ships as one container image. A separate deployment repository runs 
 
 The config is mounted read-only at `/etc/thesis/config.toml`, outside the volume.
 
-**Backup.** The database holds notes and passkey credentials, and no rebuild recovers either. Everything else still rebuilds: Gitea holds the source, the deployment holds the secrets, and the backfill timer rebuilds every PDF and build record from an empty volume. Losing passkeys alone means re-enrolling every user. Losing notes loses supervisor feedback, so the database needs a backup.
+**Backup.** The database holds notes, and no rebuild recovers them. Everything else still rebuilds: Gitea holds the source, the deployment holds the secrets, and the backfill timer rebuilds every PDF and build record from an empty volume. Sessions are disposable, and losing them only means every user logs in again. Losing notes loses supervisor feedback, so the database needs a backup.
 
 - The Snapshot timer writes `/data/backup/db.sqlite` once a day. Copying the live database file directly can catch a half-finished write, so the backup reads only the snapshot.
 - A restore drill should run `PRAGMA integrity_check` on the restored snapshot.
@@ -259,7 +251,7 @@ The config is mounted read-only at `/etc/thesis/config.toml`, outside the volume
 
 - Run nothing from the repo except `typst compile`. No Makefiles, hooks or scripts, ever.
 - Typst can only read inside `--root`, but treat builds as untrusted anyway. The container is already unprivileged, so each build runs with the timeout and output cap above, and worktrees are cleaned up on every exit path.
-- The webhook secret and the Gitea token live in the deployment's secret store and reach the container as environment variables. Enrolment secrets never reach the container; it holds only their hashes. Never log any of them, nor session IDs.
+- The webhook secret and the Gitea token live in the deployment's secret store and reach the container as environment variables. Login secrets never reach the container; it holds only their hashes. Never log any of them, nor session IDs.
 - Validate SHAs, tag names, entrypoint names, user IDs and note IDs against strict patterns before using them in paths or `git` arguments; pass `git` arguments as arrays, never through a shell.
 - Note text is untrusted input from a logged-in user. It reaches Typst only through `notes.json`, never as source, and HTML pages escape it on output.
 - Rate limits trust only the header named by `client_ip_header`. The reverse proxy must set it from the CDN's client-address header, and only for requests from the CDN's address ranges.
@@ -268,7 +260,7 @@ The config is mounted read-only at `/etc/thesis/config.toml`, outside the volume
 
 ## Testing and acceptance criteria
 
-V1 is done when a push to a fixture repo on Gitea produces a PDF at the service's origin, a review tag produces a markup diff, and a note that an enrolled supervisor adds appears in that commit's annotated PDF, without anyone touching the server.
+V1 is done when a push to a fixture repo on Gitea produces a PDF at the service's origin, a review tag produces a markup diff, and a note that a logged-in supervisor adds appears in that commit's annotated PDF, without anyone touching the server.
 
 **Fixture repo** (checked into the test suite, built with a script of commits): a `main.typ` that `#include`s two chapter files; a chapter with inline and display math, a table, a figure with a label, and a citation; a later commit that edits prose in one chapter, changes an equation, and adds a chapter; a commit that fails to compile; two `review-*` tags.
 
@@ -285,15 +277,15 @@ V1 is done when a push to a fixture repo on Gitea produces a PDF at the service'
 - [ ] After a new push, `latest.pdf` through the CDN serves the new build, and a full-SHA PDF carries `immutable`.
 - [ ] `POST /hooks/push` on the public origin returns `404`.
 - [ ] Every route except `/healthz` and `/hooks/push` needs a session. Without one, a `GET` redirects to `/login` and a `POST` gets `401`.
-- [ ] The only routes that change state are enrolment, login, logout, diff requests and note writes. Every one except enrolment and login needs a session and a CSRF token, and a `POST` with a foreign `Origin` is rejected.
-- [ ] An enrolment URL works once. After the enrolment secret changes, the new URL works once and the old passkeys still work.
-- [ ] A user removed from the config loses their sessions and passkeys at the next start.
+- [ ] The only routes that change state are login, logout, diff requests and note writes. Every one except login needs a session and a CSRF token, and a `POST` with a foreign `Origin` is rejected.
+- [ ] A wrong secret gets `401`, and a `next` pointing at another site is not followed. After a user's secret changes, the old secret fails and that user's sessions end.
+- [ ] A user removed from the config loses their sessions at the next start.
 - [ ] A supervisor cannot edit or delete another user's note, and cannot resolve any note.
 - [ ] A note whose text is `#read("/etc/passwd")`, an infinite `#while` loop, or unbalanced `]`, `"` and `\` appears verbatim in the annotated PDF.
 - [ ] Notes anchored in display math, a table and a raw block still give an annotated PDF, and each note shows the placement it got.
 - [ ] After a commit edits the lines around a note, the note moves to the new tip. After a commit deletes the note's selected text, the note is `outdated` and stays on its original commit.
 - [ ] Through the CDN, no PDF or page fetched without a session returns content, and no response shows `cf-cache-status: HIT`.
-- [ ] After the volume is deleted and the snapshot restored, every note and passkey is back, and the backfill timer rebuilds the PDFs.
+- [ ] After the volume is deleted and the snapshot restored, every note is back, and the backfill timer rebuilds the PDFs.
 - [ ] A diff request for an unknown SHA is rejected, and a full diff queue returns `503`.
 - [ ] With the webhook disabled, the poll timer picks up a push within one interval.
 - [ ] On a fresh volume, the backfill timer builds the fixture's history with no manual step.
@@ -313,7 +305,7 @@ Spike these before building the service around them. typdiff is the riskiest par
 - [ ] Do `diff-pdf` and `typdiff` build for arm64? The flake builds each architecture's image, and on an amd64 CI host the arm64 build needs an aarch64 builder or qemu-user emulation. The arm64 image has not been built yet.
 - [ ] What is the peak memory of a full-thesis `typst compile`, and of `diff-pdf` on two full-thesis PDFs? Set the container's memory limit from the larger, with headroom for the host's other services.
 - [ ] How often does each placement fallback fire? Anchor notes on the fixture repo in prose, inline math, display math, a table, a figure caption and a `#let` body, and record which level each one reaches.
-- [ ] Pick a maintained WebAuthn library for the chosen stack. Check that registration and login work at the public origin through the CDN and reverse proxy, and through the cross-device QR flow from a phone. Library chosen: `github.com/go-webauthn/webauthn` v0.18.2, tested against a software authenticator. Real devices through the CDN, and the QR flow, are still untested.
+- [x] How do users log in? With a per-user secret, typed into the login form or carried in a login link. `PLAN.md` records why.
 - [ ] What size is one full-thesis PDF, and one typdiff and one diff-pdf output? Multiply by the 200-commit backfill cap to check that the 4 GB budget holds the backfill.
 
 ## Future work: GitHub

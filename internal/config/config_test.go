@@ -137,10 +137,12 @@ func TestExampleConfigLoads(t *testing.T) {
 func TestLoadRejectsBadUsers(t *testing.T) {
 	hash := strings.Repeat("a", 64)
 	for name, users := range map[string]string{
-		"bad id":    `[[users]]` + "\nid = \"Ben\"\nname = \"B\"\nrole = \"author\"\nenrol_hash = \"" + hash + "\"\n",
-		"bad role":  `[[users]]` + "\nid = \"ben\"\nname = \"B\"\nrole = \"admin\"\nenrol_hash = \"" + hash + "\"\n",
-		"bad hash":  `[[users]]` + "\nid = \"ben\"\nname = \"B\"\nrole = \"author\"\nenrol_hash = \"secret\"\n",
-		"duplicate": strings.Repeat(`[[users]]`+"\nid = \"ben\"\nname = \"B\"\nrole = \"author\"\nenrol_hash = \""+hash+"\"\n", 2),
+		"bad id":    `[[users]]` + "\nid = \"Ben\"\nname = \"B\"\nrole = \"author\"\nsecret_hash = \"" + hash + "\"\n",
+		"bad role":  `[[users]]` + "\nid = \"ben\"\nname = \"B\"\nrole = \"admin\"\nsecret_hash = \"" + hash + "\"\n",
+		"bad hash":  `[[users]]` + "\nid = \"ben\"\nname = \"B\"\nrole = \"author\"\nsecret_hash = \"secret\"\n",
+		"duplicate": strings.Repeat(`[[users]]`+"\nid = \"ben\"\nname = \"B\"\nrole = \"author\"\nsecret_hash = \""+hash+"\"\n", 2),
+		"shared secret": `[[users]]` + "\nid = \"ben\"\nname = \"B\"\nrole = \"author\"\nsecret_hash = \"" + hash + "\"\n" +
+			`[[users]]` + "\nid = \"alice\"\nname = \"A\"\nrole = \"supervisor\"\nsecret_hash = \"" + hash + "\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Load(writeConfig(t, minimal+users)); err == nil {

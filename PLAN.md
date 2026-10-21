@@ -40,7 +40,7 @@ What works: word-level prose diffs, citation changes (deleted `@key` is escaped)
 - [x] 7. Diff chain: typdiff, then diff-pdf, then a text diff
 - [x] 8. Supervisor notes: the Source page, annotated PDFs with the three-level placement fallback, and carrying notes forward
 - [x] 9. Maintenance timers
-- [x] 10. Passkey login and enrolment, the UI, the stable URLs and the cache headers
+- [x] 10. Secret login, the UI, the stable URLs and the cache headers
 - [x] 11. Image from the flake, and the GitHub Actions workflow. The arm64 image has not been built yet.
 - [ ] 12. Deployment, tracked in the deployment repository.
 
@@ -48,13 +48,15 @@ What works: word-level prose diffs, citation changes (deleted `@key` is escaped)
 
 **Image.** The image is a `dockerTools.streamLayeredImage`, and no Dockerfile or buildx is involved. Continuous integration (CI) runs on GitHub Actions, with one native runner per architecture (`ubuntu-24.04` and `ubuntu-24.04-arm`), so nothing builds under emulation. Each runner runs `checks.<system>.tests` and builds `packages.<system>.image`. It pushes each with skopeo as `sha-<short>-amd64` and `sha-<short>-arm64`, then joins them with `crane index append` as `sha-<short>` and tags that `latest`. The amd64 image is 752 MB. It was 1.05 GB until the flake turned off WebKit and Mesa in diff-pdf's wxWidgets. That variant is not in the binary cache, and building it took about 4 minutes on the x86 dev machine. The image runs as 99:100 with `PATH=/bin`, `SSL_CERT_FILE` pointing at the Nix CA bundle, and `THESIS_CONFIG=/etc/thesis/config.toml`. A smoke test ran it with a read-only root, `cap_drop ALL` and a tmpfs `/tmp`. The healthcheck passed, and git reached GitHub over HTTPS.
 
-**Tests.** `nix build .#checks.x86_64-linux.tests` runs every package's tests in the Nix sandbox, in 1 min 47 s. The web tests drive the real handlers over Transport Layer Security (TLS) with a software passkey (ES256, "none" attestation). They cover enrolment, a reused link, login, cross-site request forgery (CSRF) tokens, Origin, rate limits, PDF URLs and cache headers, the diff queue's 503, note permissions, and annotated PDFs.
+**Tests.** `nix build .#checks.x86_64-linux.tests` runs every package's tests in the Nix sandbox, in 1 min 47 s. The web tests drive the real handlers over Transport Layer Security (TLS). They cover login by form, a wrong secret, an offsite `next`, a new secret ending sessions, cross-site request forgery (CSRF) tokens, Origin, rate limits, PDF URLs and cache headers, the diff queue's 503, note permissions, and annotated PDFs.
 
 **Cross-site links.** A GET for a PDF that is not built yet starts the build only when `Sec-Fetch-Site` is absent, `same-origin` or `none`. A link from another site gets a confirmation button, which POSTs with the CSRF token. Moving URLs and full-SHA URLs behave the same way.
 
 **Who can write notes.** The brief says supervisors create notes. The implementation lets every logged-in user create notes and edit or delete their own open ones. Only the author resolves. Restrict creation to supervisors if the author should not write notes.
 
-**Rate limits.** Each limit is a *token bucket*, kept per client address and per user. Enrolment allows 10 a minute, login 20, and note writes 30.
+**Login.** Login moved from passkeys to a per-user secret on 2026-10-21, because the service has four users, guards thesis drafts, and runs where there is no mail server or identity provider. A leaked secret works until it is rotated and can be phished, but logging in is one click from a password manager or a bookmarked link, on any device.
+
+**Rate limits.** Each limit is a *token bucket*. Login allows 20 a minute per client address, and note writes 30 a minute per client address and per user.
 
 **Config path.** The config lives at `/etc/thesis/config.toml`, a read-only directory mount.
 

@@ -82,7 +82,7 @@
             pname = "thesis";
             version = "0.1.0";
             src = lib.cleanSource ./.;
-            vendorHash = "sha256-z1h2erfw2wZ9y0QRVg/HL+W4956pAFIz6ROSQPGGC1Y=";
+            vendorHash = "sha256-BPzpn0yOpp+Tun0oDV1L9gIunNgZy5zTZcZ7Kd7tfoE=";
             env.CGO_ENABLED = "0";
           };
 

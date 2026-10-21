@@ -186,7 +186,7 @@ func (s *Service) Start(ctx context.Context) error {
 		return err
 	}
 	if n > 0 {
-		s.Log.Info("removed passkeys and sessions of users no longer in the config", "rows", n)
+		s.Log.Info("removed sessions of users no longer in the config", "rows", n)
 	}
 	return s.Store.DeleteExpiredSessions(ctx)
 }

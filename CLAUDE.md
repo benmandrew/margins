@@ -11,7 +11,7 @@ A Go service that builds a PDF for every commit of one Typst thesis repository o
 - Build with `CGO_ENABLED=0`, so the binary cross-compiles to arm64. Pick pure-Go libraries for that reason.
 - Pass `--creation-timestamp` to every `typst compile`. The dev shell exports `SOURCE_DATE_EPOCH`, which hides a missing flag.
 - Run nothing from the thesis repo except `typst compile`. Pass `git` arguments as arrays, never through a shell.
-- Every route needs a passkey login except `/healthz` and `/hooks/push`. Check roles and note ownership on the server.
+- Every route needs a login except `/healthz` and `/hooks/push`. Check roles and note ownership on the server.
 
 ## Commands
 

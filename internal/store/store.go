@@ -1,5 +1,5 @@
 // Package store holds the service's state in one SQLite database: build and
-// diff records, the job queue, notes, passkeys and sessions.
+// diff records, the job queue, notes and sessions.
 package store
 
 import (
@@ -191,6 +191,14 @@ CREATE TABLE annotated (
 	updated_at INTEGER NOT NULL,
 	UNIQUE (sha, entry, typst, notes_hash)
 );
+`,
+	// Logins moved from passkeys to the user's secret. A session records the
+	// hash of the secret it was made with, so changing a secret ends it.
+	// Sessions from before this have none and end too.
+	`
+DROP TABLE credentials;
+DROP TABLE used_enrolments;
+ALTER TABLE sessions ADD COLUMN secret_hash TEXT NOT NULL DEFAULT '';
 `,
 }
 
