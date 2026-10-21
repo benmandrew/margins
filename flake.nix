@@ -31,22 +31,12 @@
             meta.mainProgram = "typdiff";
           };
 
-          # diff-pdf only draws into an off-screen buffer, so its wxWidgets
-          # needs no web view or OpenGL. The stock build pulls in WebKitGTK and
-          # GStreamer, which made the image 1.05 GB.
-          diff-pdf = pkgs.diff-pdf.override {
-            wxwidgets_3_2 = pkgs.wxwidgets_3_2.override {
-              withWebKit = false;
-              withMesa = false;
-            };
-          };
-
           # External programs the service shells out to at run time. Typst is
           # absent on purpose: the service downloads the exact version each
           # commit pins (see .typst-review.toml in the brief).
           runtimeDeps = [
             pkgs.git
-            diff-pdf
+            pkgs.diff-pdf
             pkgs.poppler-utils
             typdiff
           ];
@@ -113,7 +103,7 @@
           # and worktrees, without Perl, Python or the GUI tools.
           imageRuntime = [
             pkgs.gitMinimal
-            diff-pdf
+            pkgs.diff-pdf
             pkgs.poppler-utils
             typdiff
           ];
